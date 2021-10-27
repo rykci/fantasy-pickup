@@ -5,21 +5,38 @@ import {
   List,
   ListItem,
   ListItemText,
+  ListItemButton,
   CircularProgress,
+  Typography,
 } from '@mui/material'
 import styled from 'styled-components'
+import Calculator from './components/Calculator'
 
 function App() {
   const [playerList, setPlayerList] = useState([])
   const [isPoolMade, setIsPoolMade] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [rosters, setRosters] = useState([[], []])
+  const [turn, setTurn] = useState(1)
   const PAGES = 45970
+  const POOL_SIZE = 10
+
+  const draft = (draftee) => {
+    const draftedList = playerList.filter((player) => player !== draftee)
+    setPlayerList(draftedList)
+    if (turn === 1) {
+      setRosters([[...rosters[0], draftee], rosters[1]])
+    } else {
+      setRosters([rosters[0], [...rosters[1], draftee]])
+    }
+    setTurn(turn * -1)
+  }
 
   const getPlayerPool = async () => {
     setIsLoading(true)
     const playerPool = []
 
-    while (playerPool.length < 20) {
+    while (playerPool.length < POOL_SIZE) {
       const player = await fetchPlayer()
 
       if (Object.values(player.stats).reduce((a, b) => a + b, 0) >= 20) {
@@ -87,17 +104,47 @@ function App() {
   }
 
   if (isPoolMade) {
-    return (
-      <PlayerPool>
-        {playerList.map((player) => {
-          return (
-            <Player key={`${player.name}${player.date}`}>
-              <PlayerText primary={player.name} secondary={player.team} />
-            </Player>
-          )
-        })}
-      </PlayerPool>
-    )
+    if (playerList.length === 0) {
+      return <Calculator rosters={rosters} />
+    } else
+      return (
+        <Main>
+          <PlayerPool>
+            <Typography>Player Pool</Typography>
+            {playerList.map((player) => {
+              return (
+                <Player key={`${player.name}${player.date}`} disablePadding>
+                  <ListItemButton onClick={() => draft(player)}>
+                    <PlayerText primary={player.name} secondary={player.team} />
+                  </ListItemButton>
+                </Player>
+              )
+            })}
+          </PlayerPool>
+
+          <Roster>
+            <Typography>Team 1</Typography>
+            {rosters[0].map((player) => {
+              return (
+                <Player key={`${player.name}${player.date}`}>
+                  <PlayerText primary={player.name} secondary={player.team} />
+                </Player>
+              )
+            })}
+          </Roster>
+
+          <Roster>
+            <Typography>Team 2</Typography>
+            {rosters[1].map((player) => {
+              return (
+                <Player key={`${player.name}${player.date}`}>
+                  <PlayerText primary={player.name} secondary={player.team} />
+                </Player>
+              )
+            })}
+          </Roster>
+        </Main>
+      )
   } else if (isLoading) {
     return (
       <Center>
@@ -106,21 +153,26 @@ function App() {
     )
   } else
     return (
-      <div className="App">
-        <header className="App-header">
+      <Center>
+        <Container>
+          <Typography variant="h3" mb={4}>
+            Fantasy Pickup
+          </Typography>
           <FetchButton variant="contained" onClick={getPlayerPool}>
             ROLL PLAYER
           </FetchButton>
-          <FetchButton
-            variant="contained"
-            onClick={() => console.log(playerList)}
-          >
-            PRINT POOL
-          </FetchButton>
-        </header>
-      </div>
+        </Container>
+      </Center>
     )
 }
+
+const Main = styled.div`
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  grid-template-rows: 1fr;
+  gap: 0px 0px;
+  grid-template-areas: '. . .';
+`
 
 const FetchButton = styled(Button)``
 
@@ -128,9 +180,19 @@ const PlayerPool = styled(List)`
   display: flex;
   flex-direction: column;
   flex-wrap: wrap;
+  width: fit-content;
 `
 
-const Player = styled(ListItem)``
+const Roster = styled(List)`
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  width: fit-content;
+`
+
+const Player = styled(ListItem)`
+  width: fit-content;
+`
 
 const PlayerText = styled(ListItemText)``
 
@@ -138,6 +200,11 @@ const Center = styled.div`
   height: 100vh;
   display: grid;
   place-items: Center;
+`
+
+const Container = styled.div`
+  display: flex;
+  flex-direction: column;
 `
 
 export default App
