@@ -12,8 +12,9 @@ export default function StatRow(props) {
 
     if (stat === 'fgp' || stat === 'ftp') {
       return (sum / rosters[player].length).toFixed(2)
+    } else {
+      return sum
     }
-    return sum
   }
 
   let teamOneWin = sumStat(stat, 0) > sumStat(stat, 1) ? 'grey' : ''

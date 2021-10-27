@@ -8,6 +8,9 @@ import {
   ListItemButton,
   CircularProgress,
   Typography,
+  Switch,
+  FormControlLabel,
+  TextField,
 } from '@mui/material'
 import styled from 'styled-components'
 import Calculator from './components/Calculator'
@@ -18,10 +21,11 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [rosters, setRosters] = useState([[], []])
   const [turn, setTurn] = useState(1)
+
+  const [showTeams, setShowTeams] = useState(true)
+  const [poolSize, setPoolSize] = useState(10)
+  const [skillLevel, setSkillLevel] = useState(20)
   const PAGES = 46002
-  const POOL_SIZE = 10
-  const SKILL_LEVEL = 20
-  const SHOW_TEAM = true
 
   const draft = (draftee) => {
     const draftedList = playerList.filter((player) => player !== draftee)
@@ -38,11 +42,11 @@ function App() {
     setIsLoading(true)
     const playerPool = []
 
-    while (playerPool.length < POOL_SIZE) {
+    while (playerPool.length < poolSize) {
       const player = await fetchPlayer()
 
       if (
-        Object.values(player.stats).reduce((a, b) => a + b, 0) >= SKILL_LEVEL
+        Object.values(player.stats).reduce((a, b) => a + b, 0) >= skillLevel
       ) {
         console.log(player)
         playerPool.push(player)
@@ -89,12 +93,12 @@ function App() {
           }`,
           date: playerData.game.date.split('T')[0],
           stats: {
-            pts: playerData.pts || 0,
             fgp: playerData.fg_pct || 0,
             ftp: playerData.ft_pct || 0,
             fg3m: playerData.fg3m || 0,
-            ast: playerData.ast || 0,
+            pts: playerData.pts || 0,
             reb: playerData.reb || 0,
+            ast: playerData.ast || 0,
             stl: playerData.stl || 0,
             blk: playerData.blk || 0,
             to: playerData.turnover || 0,
@@ -123,7 +127,7 @@ function App() {
                   <ListItemButton onClick={() => draft(player)}>
                     <PlayerText
                       primary={player.name}
-                      secondary={SHOW_TEAM ? player.team : ''}
+                      secondary={showTeams ? player.team : ''}
                     />
                   </ListItemButton>
                 </Player>
@@ -138,7 +142,7 @@ function App() {
                 <Player key={`${player.name}${player.date}`}>
                   <PlayerText
                     primary={player.name}
-                    secondary={SHOW_TEAM ? player.team : ''}
+                    secondary={showTeams ? player.team : ''}
                   />
                 </Player>
               )
@@ -152,7 +156,7 @@ function App() {
                 <Player key={`${player.name}${player.date}`}>
                   <PlayerText
                     primary={player.name}
-                    secondary={SHOW_TEAM ? player.team : ''}
+                    secondary={showTeams ? player.team : ''}
                   />
                 </Player>
               )
@@ -173,6 +177,34 @@ function App() {
           <Typography variant="h3" mb={4}>
             Fantasy Pickup
           </Typography>
+          <Options>
+            <FormControlLabel
+              control={<Switch />}
+              checked={showTeams}
+              onChange={() => setShowTeams(!showTeams)}
+              label="Show Teams"
+            />
+            <TextField
+              type="number"
+              id="outlined"
+              label="Pool Size"
+              size="small"
+              value={poolSize}
+              onChange={(e) => {
+                setPoolSize(e.target.value)
+              }}
+            />
+            <TextField
+              type="number"
+              id="outlined"
+              label="Skill Level"
+              size="small"
+              value={skillLevel}
+              onChange={(e) => {
+                setSkillLevel(e.target.value)
+              }}
+            />
+          </Options>
           <FetchButton variant="contained" onClick={getPlayerPool}>
             ROLL PLAYER
           </FetchButton>
@@ -220,6 +252,10 @@ const Center = styled.div`
 const Container = styled.div`
   display: flex;
   flex-direction: column;
+`
+
+const Options = styled.div`
+  padding-bottom: 5vh;
 `
 
 export default App

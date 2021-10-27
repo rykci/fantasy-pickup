@@ -12,6 +12,7 @@ export default function BoxScore(props) {
           </TableRow>
           <TableRow>
             <TableCell align="left"> Player </TableCell>
+            <TableCell align="center">Date</TableCell>
             <TableCell align="right">FG%</TableCell>
             <TableCell align="right">FT%</TableCell>
             <TableCell align="right">3PTM</TableCell>
@@ -27,6 +28,7 @@ export default function BoxScore(props) {
           return (
             <TableRow key={i}>
               <TableCell align="left"> {player.name} </TableCell>
+              <TableCell align="center">{player.date}</TableCell>
               <TableCell align="right">{player.stats.fgp}</TableCell>
               <TableCell align="right">{player.stats.ftp}</TableCell>
               <TableCell align="right">{player.stats.fg3m}</TableCell>
@@ -47,6 +49,7 @@ export default function BoxScore(props) {
           </TableRow>
           <TableRow>
             <TableCell align="left"> Player </TableCell>
+            <TableCell align="center"> Date </TableCell>
             <TableCell align="right">FG%</TableCell>
             <TableCell align="right">FT%</TableCell>
             <TableCell align="right">3PTM</TableCell>
@@ -62,6 +65,7 @@ export default function BoxScore(props) {
           return (
             <TableRow key={j}>
               <TableCell align="left"> {player.name} </TableCell>
+              <TableCell align="center">{player.date}</TableCell>
               <TableCell align="right">{player.stats.fgp}</TableCell>
               <TableCell align="right">{player.stats.ftp}</TableCell>
               <TableCell align="right">{player.stats.fg3m}</TableCell>
