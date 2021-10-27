@@ -33,7 +33,12 @@ export default function StatRow(props) {
 
   return (
     <TableRow>
-      <TableCell className={teamOneWin ? 'grey' : ''} align="right">
+      <TableCell
+        className={
+          teamOneWin || sumStat(stat, 0) === sumStat(stat, 1) ? 'grey' : ''
+        }
+        align="right"
+      >
         {sumStat(stat, 0)}
       </TableCell>
       <TableCell align="center">{getCatagory(stat)}</TableCell>

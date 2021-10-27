@@ -18,8 +18,10 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [rosters, setRosters] = useState([[], []])
   const [turn, setTurn] = useState(1)
-  const PAGES = 45970
+  const PAGES = 46002
   const POOL_SIZE = 10
+  const SKILL_LEVEL = 20
+  const SHOW_TEAM = true
 
   const draft = (draftee) => {
     const draftedList = playerList.filter((player) => player !== draftee)
@@ -39,9 +41,13 @@ function App() {
     while (playerPool.length < POOL_SIZE) {
       const player = await fetchPlayer()
 
-      if (Object.values(player.stats).reduce((a, b) => a + b, 0) >= 20) {
+      if (
+        Object.values(player.stats).reduce((a, b) => a + b, 0) >= SKILL_LEVEL
+      ) {
         console.log(player)
         playerPool.push(player)
+      } else {
+        console.log('bum')
       }
     }
 
@@ -115,7 +121,10 @@ function App() {
               return (
                 <Player key={`${player.name}${player.date}`} disablePadding>
                   <ListItemButton onClick={() => draft(player)}>
-                    <PlayerText primary={player.name} secondary={player.team} />
+                    <PlayerText
+                      primary={player.name}
+                      secondary={SHOW_TEAM ? player.team : ''}
+                    />
                   </ListItemButton>
                 </Player>
               )
@@ -127,7 +136,10 @@ function App() {
             {rosters[0].map((player) => {
               return (
                 <Player key={`${player.name}${player.date}`}>
-                  <PlayerText primary={player.name} secondary={player.team} />
+                  <PlayerText
+                    primary={player.name}
+                    secondary={SHOW_TEAM ? player.team : ''}
+                  />
                 </Player>
               )
             })}
@@ -138,7 +150,10 @@ function App() {
             {rosters[1].map((player) => {
               return (
                 <Player key={`${player.name}${player.date}`}>
-                  <PlayerText primary={player.name} secondary={player.team} />
+                  <PlayerText
+                    primary={player.name}
+                    secondary={SHOW_TEAM ? player.team : ''}
+                  />
                 </Player>
               )
             })}
