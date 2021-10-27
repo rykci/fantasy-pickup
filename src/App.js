@@ -115,7 +115,7 @@ function App() {
 
   if (isPoolMade) {
     if (playerList.length === 0) {
-      return <Calculator rosters={rosters} />
+      return <Calculator rosters={rosters} setRosters={setRosters} setIsPoolMade={setIsPoolMade}/>
     } else
       return (
         <Main>

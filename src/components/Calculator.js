@@ -1,10 +1,17 @@
 import styled from 'styled-components'
-import { Table, TableHead, TableRow, TableCell, TableBody } from '@mui/material'
+import { Table, TableHead, TableRow, TableCell, TableBody, Button} from '@mui/material'
 import StatRow from './StatRow'
 import BoxScore from './BoxScore'
 
 export default function Calculator(props) {
   const rosters = props.rosters
+  const setRosters = props.setRosters
+  const setIsPoolMade = props.setIsPoolMade
+
+  const reset = () => {
+    setRosters([[],[]])
+    setIsPoolMade(false)
+  }
 
   return (
     <Grid>
@@ -29,6 +36,7 @@ export default function Calculator(props) {
         </TableBody>
       </Table>
       <BoxScore rosters={rosters} />
+      <HomeButton variant='contained' onClick={reset}>Home</HomeButton>
     </Grid>
   )
 }
@@ -36,4 +44,7 @@ export default function Calculator(props) {
 const Grid = styled.div`
   display: grid;
   place-items: center;
+`
+
+const HomeButton = styled(Button)`
 `
