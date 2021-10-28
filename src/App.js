@@ -21,11 +21,21 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [rosters, setRosters] = useState([[], []])
   const [turn, setTurn] = useState(1)
+  const [error, setError] = useState(false)
 
   const [showTeams, setShowTeams] = useState(true)
   const [poolSize, setPoolSize] = useState(10)
   const [skillLevel, setSkillLevel] = useState(20)
   const PAGES = 46002
+
+
+  const reset = () => {
+    setRosters([[],[]])
+    setIsPoolMade(false)
+    setIsLoading(false)
+    setError(false)
+  }
+
 
   const draft = (draftee) => {
     const draftedList = playerList.filter((player) => player !== draftee)
@@ -43,7 +53,10 @@ function App() {
     const playerPool = []
 
     while (playerPool.length < poolSize) {
-      const player = await fetchPlayer()
+      const player = await fetchPlayer().catch((err) => {
+        console.error(err)
+        return <h1>An Error Occured, Please Try Again Later.;</h1>
+      })
 
       if (
         (player.stats.pts + player.stats.reb +player.stats.ast + player.stats.stl+
@@ -110,11 +123,20 @@ function App() {
 
         return player
         //console.log(player)
-      })
-      .catch((err) => {
+      }).catch((err) => {
+        setError(true)
         console.error(err)
-      })
+    })
   }
+
+  if (error) return (
+    <Center>
+      <Typography variant="h4" mb={4}>
+      An Error Has Occured, Please Try Again Later
+          </Typography>
+      <HomeButton variant='contained' onClick={reset}>Home</HomeButton>
+    </Center>
+  )
 
   if (isPoolMade) {
     if (playerList.length === 0) {
@@ -259,6 +281,9 @@ const Container = styled.div`
 
 const Options = styled.div`
   padding-bottom: 5vh;
+`
+
+const HomeButton = styled(Button)`
 `
 
 export default App
