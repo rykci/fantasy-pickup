@@ -29,8 +29,8 @@ export default function BoxScore(props) {
             <TableRow key={i}>
               <TableCell align="left"> {player.name} </TableCell>
               <TableCell align="center">{player.date}</TableCell>
-              <TableCell align="right">{player.stats.fgp}</TableCell>
-              <TableCell align="right">{player.stats.ftp}</TableCell>
+              <TableCell align="right">{(player.stats.fgm/player.stats.fga).toFixed(2) || 0}</TableCell>
+              <TableCell align="right">{(player.stats.ftm/player.stats.fta).toFixed(2) || 0}</TableCell>
               <TableCell align="right">{player.stats.fg3m}</TableCell>
               <TableCell align="right">{player.stats.pts}</TableCell>
               <TableCell align="right">{player.stats.reb}</TableCell>
@@ -66,8 +66,8 @@ export default function BoxScore(props) {
             <TableRow key={j}>
               <TableCell align="left"> {player.name} </TableCell>
               <TableCell align="center">{player.date}</TableCell>
-              <TableCell align="right">{player.stats.fgp}</TableCell>
-              <TableCell align="right">{player.stats.ftp}</TableCell>
+              <TableCell align="right">{(player.stats.fgm/player.stats.fga).toFixed(2)|| 0}</TableCell>
+              <TableCell align="right">{(player.stats.ftm/player.stats.fta).toFixed(2)|| 0}</TableCell>
               <TableCell align="right">{player.stats.fg3m}</TableCell>
               <TableCell align="right">{player.stats.pts}</TableCell>
               <TableCell align="right">{player.stats.reb}</TableCell>

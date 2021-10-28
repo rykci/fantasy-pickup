@@ -46,7 +46,8 @@ function App() {
       const player = await fetchPlayer()
 
       if (
-        Object.values(player.stats).reduce((a, b) => a + b, 0) >= skillLevel
+        (player.stats.pts + player.stats.reb +player.stats.ast + player.stats.stl+
+        player.stats.blk) >= skillLevel
       ) {
         console.log(player)
         playerPool.push(player)
@@ -93,8 +94,10 @@ function App() {
           }`,
           date: playerData.game.date.split('T')[0],
           stats: {
-            fgp: playerData.fg_pct || 0,
-            ftp: playerData.ft_pct || 0,
+            fgm: playerData.fgm || 0,
+            fga: playerData.fga || 0,
+            ftm: playerData.ftm || 0,
+            fta: playerData.fta || 0,
             fg3m: playerData.fg3m || 0,
             pts: playerData.pts || 0,
             reb: playerData.reb || 0,
