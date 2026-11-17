@@ -1,0 +1,191 @@
+// Fantasy Pickup Basketball — database schema (v1.1)
+//
+// Reference data (loaded by ingestion/ingest.py from historical box scores):
+//   players         one row per person (identified by name; see README "Data")
+//   player_seasons  one row per qualified player-season, with season averages,
+//                   a 9-cat value and its rank within the season
+//   game_logs       every complete regular-season game of those player-seasons
+// Game data (written by the API):
+//   games, game_players (the pool + the locked random game), draft_picks
+//
+// Extra invariants that Prisma can't express live in the migration SQL:
+//   - games: 1 <= roster_size <= 13, 2*roster_size <= pool_size <= 200
+//   - draft_picks.team must match the snake-draft order for its pick_number
+//   - draft_picks.pick_number is 1..2*roster_size of its game (trigger)
+//   - game_players.locked_game_log_id can never be updated (trigger)
+//   - the locked game log must belong to the same player-season (composite FK)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GameMode {
+  vs_cpu
+  pass_and_play
+
+  @@map("game_mode")
+}
+
+enum GameStatus {
+  drafting
+  draft_complete
+  revealed
+
+  @@map("game_status")
+}
+
+enum TeamSide {
+  A
+  B
+
+  @@map("team_side")
+}
+
+enum GameWinner {
+  A
+  B
+  draw
+
+  @@map("game_winner")
+}
+
+model Player {
+  id   Int    @id @default(autoincrement())
+  /// Display name. Two different players with the same name in the same
+  /// season get their team appended, e.g. "Eddie Johnson (SAC)".
+  name String @unique
+
+  seasons PlayerSeason[]
+
+  @@map("players")
+}
+
+/// A player's regular season: the unit that gets drafted.
+model PlayerSeason {
+  id          Int    @id @default(autoincrement())
+  playerId    Int    @map("player_id")
+  /// e.g. "1986-87"
+  season      String
+  /// Team of the player's last game that season
+  team        String
+  gamesPlayed Int    @map("games_played")
+  /// Per-game averages over complete games
+  minutes     Float
+  pts         Float
+  reb         Float
+  ast         Float
+  stl         Float
+  blk         Float
+  fg3m        Float
+  fgm         Float
+  fga         Float
+  ftm         Float
+  fta         Float
+  tov         Float
+  /// Sum of 9-cat z-scores against the other qualified players that season
+  value       Float
+  /// 1 = best in the season. NULL = no longer qualifies (kept for old games).
+  seasonRank  Int?   @map("season_rank")
+
+  player      Player       @relation(fields: [playerId], references: [id], onDelete: Restrict)
+  gameLogs    GameLog[]
+  poolEntries GamePlayer[]
+
+  @@unique([playerId, season])
+  @@index([seasonRank])
+  @@map("player_seasons")
+}
+
+model GameLog {
+  id             Int      @id @default(autoincrement())
+  playerSeasonId Int      @map("player_season_id")
+  /// NBA game id, e.g. "0028600005"
+  gameId         String   @map("game_id")
+  gameDate       DateTime @map("game_date") @db.Date
+  team           String
+  opponent       String
+  isHome         Boolean  @map("is_home")
+  minutes        Int
+  pts            Int
+  reb            Int
+  ast            Int
+  stl            Int
+  blk            Int
+  fg3m           Int
+  fgm            Int
+  fga            Int
+  ftm            Int
+  fta            Int
+  tov            Int
+
+  playerSeason PlayerSeason @relation(fields: [playerSeasonId], references: [id], onDelete: Restrict)
+  lockedIn     GamePlayer[]
+
+  // Natural key: makes ingestion idempotent.
+  @@unique([playerSeasonId, gameId])
+  // Target for the composite FK from game_players (log must belong to that player-season).
+  @@unique([id, playerSeasonId])
+  @@map("game_logs")
+}
+
+model Game {
+  id            Int         @id @default(autoincrement())
+  mode          GameMode
+  status        GameStatus  @default(drafting)
+  /// Number of player-seasons in the pool
+  poolSize      Int         @map("pool_size")
+  /// Players per team (= rounds in the draft)
+  rosterSize    Int         @map("roster_size")
+  /// true = at most one season per player in the pool
+  uniquePlayers Boolean     @map("unique_players")
+  winner        GameWinner?
+  /// Categories won by each team, set on reveal (e.g. 5-4)
+  scoreA        Int?        @map("score_a")
+  scoreB        Int?        @map("score_b")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  revealedAt    DateTime?   @map("revealed_at")
+
+  players GamePlayer[]
+  picks   DraftPick[]
+
+  @@index([createdAt])
+  @@map("games")
+}
+
+/// One row per player-season in a game's pool, holding the random game locked at creation.
+model GamePlayer {
+  gameId          Int @map("game_id")
+  playerSeasonId  Int @map("player_season_id")
+  lockedGameLogId Int @map("locked_game_log_id")
+
+  game          Game         @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  playerSeason  PlayerSeason @relation(fields: [playerSeasonId], references: [id], onDelete: Restrict)
+  lockedGameLog GameLog      @relation(fields: [lockedGameLogId, playerSeasonId], references: [id, playerSeasonId], onDelete: Restrict)
+  draftPick     DraftPick?
+
+  @@id([gameId, playerSeasonId])
+  @@index([lockedGameLogId])
+  @@map("game_players")
+}
+
+model DraftPick {
+  id             Int      @id @default(autoincrement())
+  gameId         Int      @map("game_id")
+  team           TeamSide
+  pickNumber     Int      @map("pick_number")
+  playerSeasonId Int      @map("player_season_id")
+  pickedAt       DateTime @default(now()) @map("picked_at")
+
+  game       Game       @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  /// Composite FK: you can only draft a player-season that is in this game's pool.
+  gamePlayer GamePlayer @relation(fields: [gameId, playerSeasonId], references: [gameId, playerSeasonId], onDelete: Cascade)
+
+  @@unique([gameId, pickNumber])
+  @@unique([gameId, playerSeasonId])
+  @@map("draft_picks")
+}
