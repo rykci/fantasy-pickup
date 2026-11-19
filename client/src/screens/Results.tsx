@@ -431,7 +431,12 @@ function RevealedResults({
       sound.tick();
     }, 70) : undefined;
     const nextAt = t0 + tl.starts[cursor + 1];
-    const id = window.setTimeout(() => setCursor(stepAt(tl.starts, Date.now() - t0)), Math.max(0, nextAt - Date.now()));
+    // Always move forward at least one step: a timer can fire a millisecond before Date.now() says the
+    // next step is due, and setting the same step again would stall the reveal (no re-render, no new timer).
+    const id = window.setTimeout(
+      () => setCursor((c) => Math.max(c + 1, stepAt(tl.starts, Date.now() - t0))),
+      Math.max(0, nextAt - Date.now()),
+    );
     return () => {
       window.clearTimeout(id);
       window.clearInterval(flick);
