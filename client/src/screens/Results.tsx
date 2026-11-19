@@ -179,50 +179,83 @@ function ShotCell({ made, att, avgPct, shown }: { made: number; att: number; avg
   );
 }
 
+/** True on phone-width screens: the box score switches to its compact layout. */
+function useNarrow(query = '(max-width: 640px)'): boolean {
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.(query).matches ?? false);
+  useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return;
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [query]);
+  return narrow;
+}
+
+/** The chosen game: landed, rolling, or not yet. Always two lines, so nothing shifts. */
+function GameInfo({ g, state, rollText }: { g: LockedGame; state: RowState; rollText?: { date: string; matchup: string } }) {
+  const { rolling, landed } = state;
+  if (landed) {
+    return (
+      <span className="stat-in game-landed">
+        <span>{formatDate(g.gameDate)}</span>
+        <span className="muted small">
+          {g.team} {g.isHome ? 'vs' : '@'} {g.opponent} · {g.minutes} min
+        </span>
+      </span>
+    );
+  }
+  if (rolling && rollText) {
+    // Same two-line shape as a landed game, so nothing shifts while it rolls.
+    return (
+      <span className="game-rolling">
+        <span>{rollText.date}</span>
+        <span className="small">{rollText.matchup}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="game-landed">
+      <span className="muted">Not rolled yet</span>
+      <span className="small">{'\u00a0'}</span>
+    </span>
+  );
+}
+
 function PlayerRow({
   p,
   g,
   state,
   rollText,
   rowRef,
+  compact,
 }: {
   p: FullPlayerView & { pickNumber?: number };
   g: LockedGame;
   state: RowState;
   rollText?: { date: string; matchup: string };
   rowRef?: (el: HTMLTableRowElement | null) => void;
+  /** Phones: the chosen game goes under the name instead of in its own column. */
+  compact?: boolean;
 }) {
   const { rolling, landed, shown } = state;
+  const meta = `${landed ? `${p.season} · ${p.team}` : 'Season ?'}${p.pickNumber !== undefined ? ` · #${p.pickNumber}` : ''}`;
   return (
     <tr ref={rowRef} className={`box-row ${rolling ? 'rolling' : ''} ${landed && shown < STAT_COUNT ? 'filling' : ''}`}>
       <td className="name">
         {p.name}
-        <span className="gp">
-          {landed ? `${p.season} · ${p.team}` : 'Season ?'}
-          {p.pickNumber !== undefined && ` · Pick #${p.pickNumber}`}
-        </span>
-      </td>
-      <td className="game-cell">
-        {landed ? (
-          <span className="stat-in game-landed">
-            <span>{formatDate(g.gameDate)}</span>
-            <span className="muted small">
-              {g.team} {g.isHome ? 'vs' : '@'} {g.opponent} · {g.minutes} min
-            </span>
-          </span>
-        ) : rolling && rollText ? (
-          // Same two-line shape as a landed game, so nothing shifts while it rolls.
-          <span className="game-rolling">
-            <span>{rollText.date}</span>
-            <span className="small">{rollText.matchup}</span>
-          </span>
-        ) : (
-          <span className="game-landed">
-            <span className="muted">Not rolled yet</span>
-            <span className="small">{'\u00a0'}</span>
+        <span className="gp">{compact ? meta : meta.replace(' · #', ' · Pick #')}</span>
+        {compact && (
+          <span className="gp game-under-name">
+            <GameInfo g={g} state={state} rollText={rollText} />
           </span>
         )}
       </td>
+      {!compact && (
+        <td className="game-cell">
+          <GameInfo g={g} state={state} rollText={rollText} />
+        </td>
+      )}
       {COUNTING_COLS.map((s, j) =>
         j < shown ? (
           <td
@@ -251,21 +284,25 @@ function PlayerRow({
   );
 }
 
-/** Fixed column widths: the box score keeps its shape while games roll and stats land. */
-const COL_WIDTHS = [200, 190, ...COUNTING_COLS.map(() => 56), 66, 66, 48];
+/**
+ * Fixed column widths: the box score keeps its shape while games roll and stats land.
+ * Compact (phones): no game column, and percentages so all 9 stats fit the screen.
+ */
+const COL_WIDTHS = ['200px', '190px', ...COUNTING_COLS.map(() => '56px'), '66px', '66px', '48px'];
+const COMPACT_COL_WIDTHS = ['28%', ...COUNTING_COLS.map(() => '7%'), '11%', '10%', '9%'];
 
-function LineTableHead() {
+function LineTableHead({ compact }: { compact?: boolean }) {
   return (
     <>
       <colgroup>
-        {COL_WIDTHS.map((w, i) => (
+        {(compact ? COMPACT_COL_WIDTHS : COL_WIDTHS).map((w, i) => (
           <col key={i} style={{ width: w }} />
         ))}
       </colgroup>
       <thead>
       <tr>
         <th>Player</th>
-        <th>Chosen game</th>
+        {!compact && <th>Chosen game</th>}
         {COUNTING_COLS.map((s) => (
           <th key={s.key} className="num">
             {s.label}
@@ -382,6 +419,7 @@ function RevealedResults({
   onRematch: (gameId: number) => void;
 }) {
   const tl = useMemo(() => buildTimeline(result), [result]);
+  const compact = useNarrow();
   const online = state.online;
   const you = online?.you ?? null;
   // Online: both screens run the reveal from the server's start time. Local: from now, unless already watched.
@@ -621,8 +659,8 @@ function RevealedResults({
                 {team.label}
               </h2>
               <div className="table-wrap">
-                <table className="line-table">
-                  <LineTableHead />
+                <table className={`line-table ${compact ? 'compact' : ''}`}>
+                  <LineTableHead compact={compact} />
                   <tbody>
                     {team.players.map((p) => {
                       const st = rowState(p.pickNumber);
@@ -633,6 +671,7 @@ function RevealedResults({
                           g={p.lockedGame}
                           state={st}
                           rollText={st.rolling ? rollingGame(p, opponents) : undefined}
+                          compact={compact}
                           rowRef={(el) => {
                             if (el) rows.current.set(p.pickNumber, el);
                           }}
@@ -642,7 +681,7 @@ function RevealedResults({
                   </tbody>
                   <tfoot>
                     <tr>
-                      <td colSpan={2}>Team total</td>
+                      <td colSpan={compact ? 1 : 2}>Team total</td>
                       {COUNTING_COLS.map((s) => (
                         <td key={s.key} className="num">
                           {tot[s.key]}
@@ -671,11 +710,11 @@ function RevealedResults({
             Their games were chosen too, but don&apos;t count for either team. Best season first.
           </p>
           <div className="table-wrap">
-            <table className="line-table">
-              <LineTableHead />
+            <table className={`line-table ${compact ? 'compact' : ''}`}>
+              <LineTableHead compact={compact} />
               <tbody>
                 {result.undrafted.map((p) => (
-                  <PlayerRow key={p.id} p={p} g={p.lockedGame} state={FULL} />
+                  <PlayerRow key={p.id} p={p} g={p.lockedGame} state={FULL} compact={compact} />
                 ))}
               </tbody>
             </table>
