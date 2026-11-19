@@ -2,7 +2,14 @@ import type { GameSettings, PickRecord, Team } from './types.js';
 
 export const TEAMS: readonly Team[] = ['A', 'B'];
 
-export const DEFAULT_SETTINGS: GameSettings = { poolSize: 24, rosterSize: 5, uniquePlayers: false };
+export const DEFAULT_SETTINGS: GameSettings = {
+  poolSize: 15,
+  rosterSize: 5,
+  uniquePlayers: false,
+  showSeasonTeam: true,
+  showGameDate: false,
+  showAverages: false,
+};
 /** Mirrored by the games_settings_valid CHECK constraint. */
 export const LIMITS = { minRoster: 1, maxRoster: 13, maxPool: 200 } as const;
 

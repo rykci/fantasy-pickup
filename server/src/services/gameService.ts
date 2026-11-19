@@ -16,6 +16,7 @@ import { PoolUnavailableError, UNIVERSE_TOP_N_PER_SEASON, samplePool } from '../
 import { type CategoryResult, type MatchupResult, type TeamTotals, pct, scoreMatchup, teamTotals } from '../domain/scoring.js';
 import type {
   GameMode,
+  GameClue,
   GameSettings,
   GameStatus,
   LockedLine,
@@ -43,9 +44,15 @@ export interface PlayerView {
   /** Person id: shared by every season of the same player. */
   playerId: number;
   name: string;
-  season: string;
-  team: string;
-  /** Season per-game averages. Percentages are 0-1 fractions (null = no attempts). */
+  /** null during the draft unless the game shows season & team. */
+  season: string | null;
+  team: string | null;
+  /** Date and opponent of the locked game (no stats). Only during the draft, and only if the game shows it. */
+  gameClue: { gameDate: string; opponent: string; isHome: boolean } | null;
+  /**
+   * Season per-game averages. Percentages are 0-1 fractions (null = no attempts).
+   * null during the draft unless the game shows averages.
+   */
   averages: {
     gamesPlayed: number;
     minutes: number;
@@ -62,10 +69,18 @@ export interface PlayerView {
     fta: number;
     ftPct: number | null;
     tov: number;
-  };
-  /** 9-cat value relative to this game's pool (sum of z-scores; 0 = pool average). */
-  value: number;
+  } | null;
+  /** 9-cat value relative to this game's pool (sum of z-scores; 0 = pool average). null when averages are hidden. */
+  value: number | null;
 }
+
+/** Revealed players always carry everything. */
+export type FullPlayerView = PlayerView & {
+  season: string;
+  team: string;
+  averages: NonNullable<PlayerView['averages']>;
+  value: number;
+};
 
 export interface PickView {
   pickNumber: number;
@@ -73,7 +88,8 @@ export interface PickView {
   team: Team;
   playerSeasonId: number;
   playerName: string;
-  season: string;
+  /** null while the game hides season & team. */
+  season: string | null;
   pickedAt: string;
 }
 
@@ -102,7 +118,11 @@ export interface PickResponse {
   autoPicks: PickView[];
 }
 
-export interface RevealedPlayer extends PlayerView {
+export interface UndraftedPlayer extends FullPlayerView {
+  lockedGame: Omit<LockedLine, 'playerSeasonId'>;
+}
+
+export interface RevealedPlayer extends FullPlayerView {
   pickNumber: number;
   lockedGame: Omit<LockedLine, 'playerSeasonId'>;
 }
@@ -117,6 +137,8 @@ export interface RevealView {
   decidedBy: MatchupResult['decidedBy'];
   categories: CategoryResult[];
   teams: Record<Team, { label: string; totals: TeamTotals; players: RevealedPlayer[] }>;
+  /** Pool players nobody drafted, with their chosen game too. Best season value first. */
+  undrafted: UndraftedPlayer[];
 }
 
 // --------------------------------------------------------------- service
@@ -153,8 +175,13 @@ export class GameService {
   async getState(gameId: number): Promise<GameStateView> {
     const game = await this.repo.findGame(gameId);
     if (!game) throw notFound(`Game ${gameId}`);
-    const [pool, picks] = await Promise.all([this.repo.listPool(gameId), this.repo.listPicks(gameId)]);
-    return buildState(game, pool, picks);
+    const wantClues = game.showGameDate && game.status !== 'revealed';
+    const [pool, picks, clues] = await Promise.all([
+      this.repo.listPool(gameId),
+      this.repo.listPicks(gameId),
+      wantClues ? this.repo.listGameClues(gameId) : Promise.resolve([]),
+    ]);
+    return buildState(game, pool, picks, clues);
   }
 
   /**
@@ -241,9 +268,12 @@ export class GameService {
 
       const [pool, lines] = await Promise.all([
         repo.listPool(gameId),
-        repo.listLockedLines(
-          gameId,
-          picks.map((p) => p.playerSeasonId),
+        // Every pool player's game: the drafted ones score, the undrafted ones are shown too.
+        repo.listLocks(gameId).then((locks) =>
+          repo.listLockedLines(
+            gameId,
+            locks.map((l) => l.playerSeasonId),
+          ),
         ),
       ]);
       const values = poolValues(pool);
@@ -267,6 +297,16 @@ export class GameService {
         return { label: labels[side], totals: teamTotals(players.map((p) => p.lockedGame)), players };
       };
       const teams = { A: team('A'), B: team('B') };
+      const drafted = new Set(picks.map((p) => p.playerSeasonId));
+      const undrafted: UndraftedPlayer[] = pool
+        .filter((p) => !drafted.has(p.id))
+        .map((p) => {
+          const line = linesById.get(p.id);
+          if (!line) throw new Error(`Missing locked game for player-season ${p.id}`);
+          const { playerSeasonId: _omit, ...lockedGame } = line;
+          return { ...toPlayerView(p, values), lockedGame };
+        })
+        .sort((x, y) => y.value - x.value);
       const result = scoreMatchup(teams.A.totals, teams.B.totals);
 
       if (game.status !== 'revealed') {
@@ -283,6 +323,7 @@ export class GameService {
         decidedBy: result.decidedBy,
         categories: result.categories,
         teams,
+        undrafted,
       };
     });
   }
@@ -296,7 +337,33 @@ export function teamLabels(mode: GameMode): Record<Team, string> {
 
 const round3 = (n: number | null) => (n === null ? null : Math.round(n * 1000) / 1000);
 
-export function toPlayerView(p: PoolPlayer, values: ReadonlyMap<number, number>): PlayerView {
+/** What the draft board may show of a player-season, per the game's settings. */
+function toDraftView(
+  p: PoolPlayer,
+  values: ReadonlyMap<number, number>,
+  show: Pick<GameSettings, 'showSeasonTeam' | 'showGameDate' | 'showAverages'>,
+  clue: GameClue | undefined,
+): PlayerView {
+  const full = toPlayerView(p, values);
+  return {
+    ...full,
+    season: show.showSeasonTeam ? full.season : null,
+    team: show.showSeasonTeam ? full.team : null,
+    gameClue: show.showGameDate && clue ? { gameDate: clue.gameDate, opponent: clue.opponent, isHome: clue.isHome } : null,
+    averages: show.showAverages ? full.averages : null,
+    value: show.showAverages ? full.value : null,
+  };
+}
+
+/**
+ * Stable per-game shuffle key. Used to order the board (and same-name players) when
+ * averages or seasons are hidden, without leaking rank or season through the order.
+ */
+function shuffleKey(gameId: number, id: number): number {
+  return Math.imul((id ^ Math.imul(gameId, 0x9e3779b1)) >>> 0, 0x85ebca6b) >>> 0;
+}
+
+export function toPlayerView(p: PoolPlayer, values: ReadonlyMap<number, number>): FullPlayerView {
   const a = p.averages;
   return {
     id: p.id,
@@ -304,6 +371,7 @@ export function toPlayerView(p: PoolPlayer, values: ReadonlyMap<number, number>)
     name: p.name,
     season: p.season,
     team: p.team,
+    gameClue: null,
     averages: {
       gamesPlayed: a.gamesPlayed,
       minutes: round1(a.minutes),
@@ -325,10 +393,22 @@ export function toPlayerView(p: PoolPlayer, values: ReadonlyMap<number, number>)
   };
 }
 
-function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[]): GameStateView {
+function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[], clues: GameClue[]): GameStateView {
   const labels = teamLabels(game.mode);
+  // Before the reveal, send only what the settings allow. After it, everything.
+  const revealed = game.status === 'revealed';
+  const show = revealed ? { showSeasonTeam: true, showGameDate: false, showAverages: true } : game;
   const values = poolValues(pool);
-  const views = new Map(pool.map((p) => [p.id, toPlayerView(p, values)]));
+  const clueById = new Map(clues.map((c) => [c.playerSeasonId, c]));
+  const views = new Map<number, PlayerView>(
+    pool.map((p) => [p.id, toDraftView(p, values, show, clueById.get(p.id))]),
+  );
+  // Best value first when averages are shown. Otherwise by name, so the order doesn't
+  // leak the ranking; same-name entries in a per-game shuffled order (not by season).
+  const boardOrder = show.showAverages
+    ? (x: PlayerView, y: PlayerView) => (y.value ?? 0) - (x.value ?? 0)
+    : (x: PlayerView, y: PlayerView) =>
+        x.name.localeCompare(y.name) || shuffleKey(game.id, x.id) - shuffleKey(game.id, y.id);
   const pickedIds = new Set(picks.map((p) => p.playerSeasonId));
   const byPick = new Map(picks.map((p) => [p.pickNumber, p.playerSeasonId]));
   const slot = currentSlot(picks.length, game.rosterSize);
@@ -339,14 +419,21 @@ function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[]): 
     mode: game.mode,
     status: game.status,
     createdAt: game.createdAt.toISOString(),
-    settings: { poolSize: game.poolSize, rosterSize: game.rosterSize, uniquePlayers: game.uniquePlayers },
+    settings: {
+      poolSize: game.poolSize,
+      rosterSize: game.rosterSize,
+      uniquePlayers: game.uniquePlayers,
+      showSeasonTeam: game.showSeasonTeam,
+      showGameDate: game.showGameDate,
+      showAverages: game.showAverages,
+    },
     totalPicks: totalPicks(game.rosterSize),
     teamLabels: labels,
     cpuTeams: game.mode === 'vs_cpu' ? [CPU_TEAM] : [],
     currentTurn: slot ? { ...slot, label: labels[slot.team] } : null,
     draftOrder: draftOrder(game.rosterSize).map((s) => ({ ...s, playerSeasonId: byPick.get(s.pickNumber) ?? null })),
     rosters: { A: roster('A'), B: roster('B') },
-    available: [...views.values()].filter((v) => !pickedIds.has(v.id)).sort((x, y) => y.value - x.value),
+    available: [...views.values()].filter((v) => !pickedIds.has(v.id)).sort(boardOrder),
     picks: picks.map((p) => {
       const v = views.get(p.playerSeasonId);
       return {
@@ -355,7 +442,7 @@ function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[]): 
         team: p.team,
         playerSeasonId: p.playerSeasonId,
         playerName: v?.name ?? `#${p.playerSeasonId}`,
-        season: v?.season ?? '',
+        season: v?.season ?? null,
         pickedAt: p.pickedAt.toISOString(),
       };
     }),

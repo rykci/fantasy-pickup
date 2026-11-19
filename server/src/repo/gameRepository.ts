@@ -3,6 +3,7 @@ import type { PoolCandidate } from '../domain/pool.js';
 import type {
   GameMode,
   GameSettings,
+  GameClue,
   GameStatus,
   LockRecord,
   LockedLine,
@@ -46,6 +47,8 @@ export interface GameRepository {
   /** Picks in pick order. */
   listPicks(gameId: number): Promise<PickRecord[]>;
   listLocks(gameId: number): Promise<LockRecord[]>;
+  /** Date and opponent of every locked game in this game (no stats). Only for games that show them. */
+  listGameClues(gameId: number): Promise<GameClue[]>;
   /** The locked game lines for the given player-seasons in this game. Only call after the draft. */
   listLockedLines(gameId: number, playerSeasonIds: number[]): Promise<LockedLine[]>;
   addPick(gameId: number, pick: { pickNumber: number; team: Team; playerSeasonId: number }): Promise<PickRecord>;

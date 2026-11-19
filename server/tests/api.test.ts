@@ -24,10 +24,11 @@ describe('REST API', () => {
   it('accepts custom settings', async () => {
     const res = await request(app)
       .post('/api/games')
-      .send({ mode: 'pass_and_play', poolSize: 12, rosterSize: 4, uniquePlayers: true })
+      .send({ mode: 'pass_and_play', poolSize: 12, rosterSize: 4, uniquePlayers: true, showGameDate: true })
       .expect(201);
-    expect(res.body.settings).toEqual({ poolSize: 12, rosterSize: 4, uniquePlayers: true });
+    expect(res.body.settings).toMatchObject({ poolSize: 12, rosterSize: 4, uniquePlayers: true, showAverages: false });
     expect(res.body.available).toHaveLength(12);
+    expect(res.body.available.every((p: { gameClue: unknown }) => p.gameClue !== null)).toBe(true);
     expect(res.body.draftOrder).toHaveLength(8);
   });
 

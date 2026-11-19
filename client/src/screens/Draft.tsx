@@ -4,6 +4,11 @@ import DraftOrder from '../components/DraftOrder';
 import PlayerTable from '../components/PlayerTable';
 import Roster from '../components/Roster';
 
+/** "1986-87 Michael Jordan", or just the name when seasons are hidden. */
+function withSeason(season: string | null, name: string): string {
+  return season ? `${season} ${name}` : name;
+}
+
 interface Props {
   gameId: number;
   onComplete: () => void;
@@ -38,16 +43,16 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
       const res = await api.pick(gameId, player.id, state.currentTurn.team);
       setState(res.state);
       if (res.autoPicks.length > 0) {
-        setNotice(`CPU drafted ${res.autoPicks.map((p) => `${p.season} ${p.playerName} (#${p.pickNumber})`).join(' and ')}.`);
+        setNotice(`CPU drafted ${res.autoPicks.map((p) => `${withSeason(p.season, p.playerName)} (#${p.pickNumber})`).join(' and ')}.`);
       } else if (res.state.mode === 'pass_and_play' && res.state.currentTurn) {
         const next = res.state.currentTurn;
         setNotice(
           next.team === state.currentTurn.team
-            ? `${picker} took ${player.season} ${player.name} — and picks again (snake turn).`
-            : `${picker} took ${player.season} ${player.name}. Pass the device to ${next.label}.`,
+            ? `${picker} took ${withSeason(player.season, player.name)} — and picks again (snake turn).`
+            : `${picker} took ${withSeason(player.season, player.name)}. Pass the device to ${next.label}.`,
         );
       } else {
-        setNotice(`${picker} drafted ${player.season} ${player.name}.`);
+        setNotice(`${picker} drafted ${withSeason(player.season, player.name)}.`);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -101,7 +106,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
               <div className="turn-title">Rosters are set. Time to see who showed up.</div>
             </div>
             <button className="btn btn-primary btn-lg" onClick={onComplete}>
-              Reveal locked games →
+              Reveal the games →
             </button>
           </>
         )}
@@ -123,6 +128,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
         {!complete ? (
           <PlayerTable
             players={state.available}
+            show={state.settings}
             canPick={!!turn && !isCpuTurn}
             pickLabel={pickLabel}
             busy={busy}
@@ -134,7 +140,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
               All {state.totalPicks} picks are in. {state.available.length} player-seasons went undrafted.
             </p>
             <p className="muted small">
-              Each player's locked game was chosen when this game was created and hasn't changed since.
+              Each player's game was chosen when this draft was created and hasn't changed since.
             </p>
           </div>
         )}

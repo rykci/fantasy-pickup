@@ -40,6 +40,21 @@ describe('database invariants', () => {
     }
   });
 
+  it('game clues match each locked game, without exposing its stats', async () => {
+    const { id, available } = await newGame('pass_and_play', { showGameDate: true });
+    const rows = await prisma.gamePlayer.findMany({ where: { gameId: id }, include: { lockedGameLog: true } });
+    const byPs = new Map(rows.map((r) => [r.playerSeasonId, r.lockedGameLog]));
+    for (const p of available) {
+      const g = byPs.get(p.id)!;
+      expect(p.gameClue).toEqual({
+        gameDate: g.gameDate.toISOString().slice(0, 10),
+        opponent: g.opponent,
+        isHome: g.isHome,
+      });
+      expect(p.averages).toBeNull();
+    }
+  });
+
   it('uniquePlayers: no player appears twice in the pool', async () => {
     const { available } = await newGame('pass_and_play', { poolSize: 200, uniquePlayers: true });
     expect(new Set(available.map((p) => p.playerId)).size).toBe(200);

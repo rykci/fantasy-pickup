@@ -4,6 +4,7 @@ import type { PoolCandidate } from '../domain/pool.js';
 import {
   STAT_KEYS,
   type GameMode,
+  type GameClue,
   type GameSettings,
   type GameStatus,
   type LockRecord,
@@ -99,6 +100,20 @@ export class PrismaGameRepository implements GameRepository {
       select: { playerSeasonId: true, lockedGameLogId: true },
       orderBy: { playerSeasonId: 'asc' },
     });
+  }
+
+  async listGameClues(gameId: number): Promise<GameClue[]> {
+    // Date / opponent / home-away only: never the locked game's stats.
+    const rows = await this.db.gamePlayer.findMany({
+      where: { gameId },
+      select: { playerSeasonId: true, lockedGameLog: { select: { gameDate: true, opponent: true, isHome: true } } },
+    });
+    return rows.map(({ playerSeasonId, lockedGameLog: g }) => ({
+      playerSeasonId,
+      gameDate: g.gameDate.toISOString().slice(0, 10),
+      opponent: g.opponent,
+      isHome: g.isHome,
+    }));
   }
 
   async listLockedLines(gameId: number, playerSeasonIds: number[]): Promise<LockedLine[]> {

@@ -11,6 +11,9 @@ const createGameBody = z.object({
   poolSize: z.number().int().optional(),
   rosterSize: z.number().int().optional(),
   uniquePlayers: z.boolean().optional(),
+  showSeasonTeam: z.boolean().optional(),
+  showGameDate: z.boolean().optional(),
+  showAverages: z.boolean().optional(),
 });
 const pickBody = z.object({
   playerSeasonId: z.number().int().positive(),

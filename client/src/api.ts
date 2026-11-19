@@ -9,9 +9,27 @@ export interface GameSettings {
   poolSize: number;
   rosterSize: number;
   uniquePlayers: boolean;
+  // What the draft board shows before the reveal.
+  showSeasonTeam: boolean;
+  /** Date and opponent of each locked game, as a clue. */
+  showGameDate: boolean;
+  showAverages: boolean;
 }
 
-export const DEFAULT_SETTINGS: GameSettings = { poolSize: 24, rosterSize: 5, uniquePlayers: false };
+export const DEFAULT_SETTINGS: GameSettings = {
+  poolSize: 15,
+  rosterSize: 5,
+  uniquePlayers: false,
+  showSeasonTeam: true,
+  showGameDate: false,
+  showAverages: false,
+};
+
+export interface GameClue {
+  gameDate: string;
+  opponent: string;
+  isHome: boolean;
+}
 /** Mirrors server/src/domain/draft.ts LIMITS. */
 export const LIMITS = { minRoster: 1, maxRoster: 13, maxPool: 200 } as const;
 
@@ -40,12 +58,19 @@ export interface PlayerView {
   /** Same for every season of a player. */
   playerId: number;
   name: string;
-  season: string;
-  team: string;
-  averages: Averages;
-  /** 9-cat value relative to this pool (0 = pool average). */
-  value: number;
+  /** null during the draft when the game hides season & team. */
+  season: string | null;
+  team: string | null;
+  /** Locked game date/opponent, when the game shows it during the draft. */
+  gameClue: GameClue | null;
+  /** null during the draft when the game hides averages. */
+  averages: Averages | null;
+  /** 9-cat value relative to this pool (0 = pool average). null when stats are hidden. */
+  value: number | null;
 }
+
+/** Revealed players always carry their stats. */
+export type FullPlayerView = PlayerView & { season: string; team: string; averages: Averages; value: number };
 
 export interface PickView {
   pickNumber: number;
@@ -53,7 +78,7 @@ export interface PickView {
   team: Team;
   playerSeasonId: number;
   playerName: string;
-  season: string;
+  season: string | null;
   pickedAt: string;
 }
 
@@ -129,9 +154,22 @@ export interface RevealResult {
     {
       label: string;
       totals: StatLine;
-      players: (PlayerView & { pickNumber: number; lockedGame: LockedGame })[];
+      players: (FullPlayerView & { pickNumber: number; lockedGame: LockedGame })[];
     }
   >;
+  /** Pool players nobody drafted, with their chosen game. Best season value first. */
+  undrafted: (FullPlayerView & { lockedGame: LockedGame })[];
+}
+
+/** "Dec 25, 1996" */
+export function formatDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 /** ".512" style, or "–" when there were no attempts. */

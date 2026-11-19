@@ -1,25 +1,28 @@
 import { useMemo, useState } from 'react';
-import { formatPct, type PlayerView } from '../api';
+import { formatDate, formatPct, type Averages, type GameSettings, type PlayerView } from '../api';
 
-type SortKey =
-  | 'name'
-  | 'season'
-  | 'team'
-  | 'pts'
-  | 'reb'
-  | 'ast'
-  | 'stl'
-  | 'blk'
-  | 'fg3m'
-  | 'fgPct'
-  | 'ftPct'
-  | 'tov'
-  | 'value';
+type StatKey = 'pts' | 'reb' | 'ast' | 'stl' | 'blk' | 'fg3m' | 'fgPct' | 'ftPct' | 'tov';
+type SortKey = 'name' | 'season' | 'team' | 'clue' | StatKey | 'value';
 
-const COLUMNS: { key: SortKey; label: string; numeric?: boolean; title?: string; lowerIsBetter?: boolean }[] = [
-  { key: 'name', label: 'Player' },
+interface Column {
+  key: SortKey;
+  label: string;
+  numeric?: boolean;
+  title?: string;
+  lowerIsBetter?: boolean;
+}
+
+const NAME_COLUMN: Column = { key: 'name', label: 'Player' };
+const SEASON_TEAM_COLUMNS: Column[] = [
   { key: 'season', label: 'Season' },
   { key: 'team', label: 'Team' },
+];
+const CLUE_COLUMN: Column = {
+  key: 'clue',
+  label: 'Game',
+  title: 'Date and opponent of the chosen game that will count. Its stats stay hidden until the reveal.',
+};
+const STAT_COLUMNS: Column[] = [
   { key: 'pts', label: 'PTS', numeric: true },
   { key: 'reb', label: 'REB', numeric: true },
   { key: 'ast', label: 'AST', numeric: true },
@@ -38,37 +41,81 @@ const COLUMNS: { key: SortKey; label: string; numeric?: boolean; title?: string;
   },
 ];
 
-function value(p: PlayerView, key: SortKey): string | number {
-  if (key === 'name' || key === 'season' || key === 'team') return p[key];
-  if (key === 'value') return p.value;
-  return p.averages[key] ?? -1;
+function sortValue(p: PlayerView, key: SortKey): string | number {
+  if (key === 'name') return p.name;
+  if (key === 'season' || key === 'team') return p[key] ?? '';
+  if (key === 'clue') return p.gameClue?.gameDate ?? '';
+  if (key === 'value') return p.value ?? 0;
+  return p.averages?.[key] ?? -1;
 }
+
+type Visibility = Pick<GameSettings, 'showSeasonTeam' | 'showGameDate' | 'showAverages'>;
 
 interface Props {
   players: PlayerView[];
+  show: Visibility;
   canPick: boolean;
   pickLabel: string;
   busy: boolean;
   onPick: (player: PlayerView) => void;
 }
 
-export default function PlayerTable({ players, canPick, pickLabel, busy, onPick }: Props) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'value', dir: -1 });
+function StatCells({ a, value }: { a: Averages; value: number | null }) {
+  return (
+    <>
+      <td className="num">{a.pts.toFixed(1)}</td>
+      <td className="num">{a.reb.toFixed(1)}</td>
+      <td className="num">{a.ast.toFixed(1)}</td>
+      <td className="num">{a.stl.toFixed(1)}</td>
+      <td className="num">{a.blk.toFixed(1)}</td>
+      <td className="num">{a.fg3m.toFixed(1)}</td>
+      <td className="num" title={`${a.fgm.toFixed(1)}/${a.fga.toFixed(1)} per game`}>
+        {formatPct(a.fgPct)}
+      </td>
+      <td className="num" title={`${a.ftm.toFixed(1)}/${a.fta.toFixed(1)} per game`}>
+        {formatPct(a.ftPct)}
+      </td>
+      <td className="num">{a.tov.toFixed(1)}</td>
+      <td className="num strong">{(value ?? 0).toFixed(1)}</td>
+    </>
+  );
+}
+
+/** What's hidden, for the toolbar note. */
+function hiddenNote(show: Visibility): string | null {
+  const hidden = [
+    !show.showSeasonTeam && 'season & team',
+    !show.showAverages && 'averages',
+    !show.showGameDate && 'game dates',
+  ].filter(Boolean);
+  return hidden.length ? `${hidden.join(', ')} hidden until the reveal` : null;
+}
+
+export default function PlayerTable({ players, show, canPick, pickLabel, busy, onPick }: Props) {
+  const columns = [
+    NAME_COLUMN,
+    ...(show.showSeasonTeam ? SEASON_TEAM_COLUMNS : []),
+    ...(show.showGameDate ? [CLUE_COLUMN] : []),
+    ...(show.showAverages ? STAT_COLUMNS : []),
+  ];
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>(
+    show.showAverages ? { key: 'value', dir: -1 } : { key: 'name', dir: 1 },
+  );
   const [query, setQuery] = useState('');
+  const note = hiddenNote(show);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return players
-      .filter(
-        (p) =>
-          !q || p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q) || p.season.includes(q),
-      )
-      .sort((a, b) => {
-        const va = value(a, sort.key);
-        const vb = value(b, sort.key);
-        const cmp = typeof va === 'number' ? va - (vb as number) : String(va).localeCompare(String(vb));
-        return cmp * sort.dir;
-      });
+    const matches = (p: PlayerView) =>
+      !q || [p.name, p.team, p.season, p.gameClue?.opponent].some((f) => f?.toLowerCase().includes(q));
+    // Server order is the tiebreak (it's shuffled for same names when seasons are hidden).
+    const index = new Map(players.map((p, i) => [p.id, i]));
+    return players.filter(matches).sort((a, b) => {
+      const va = sortValue(a, sort.key);
+      const vb = sortValue(b, sort.key);
+      const cmp = typeof va === 'number' ? va - (vb as number) : String(va).localeCompare(String(vb));
+      return cmp * sort.dir || index.get(a.id)! - index.get(b.id)!;
+    });
   }, [players, query, sort]);
 
   function toggleSort(key: SortKey, numeric?: boolean, lowerIsBetter?: boolean) {
@@ -77,25 +124,29 @@ export default function PlayerTable({ players, canPick, pickLabel, busy, onPick 
     setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: first }));
   }
 
+  const placeholder = `Search player${show.showSeasonTeam ? ', team or season' : ''}${show.showGameDate ? ', opponent' : ''}…`;
+
   return (
     <div className="pool">
       <div className="pool-toolbar">
         <input
           className="search"
           type="search"
-          placeholder="Search player, team or season…"
+          placeholder={placeholder}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search players"
         />
-        <span className="muted small">{players.length} available</span>
+        <span className="muted small">
+          {players.length} available{note && ` · ${note}`}
+        </span>
       </div>
 
       <div className="table-wrap">
         <table className="player-table">
           <thead>
             <tr>
-              {COLUMNS.map((c) => (
+              {columns.map((c) => (
                 <th
                   key={c.key}
                   className={c.numeric ? 'num' : undefined}
@@ -112,43 +163,45 @@ export default function PlayerTable({ players, canPick, pickLabel, busy, onPick 
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => {
-              const a = p.averages;
-              return (
-                <tr key={p.id}>
-                  <td className="name">
-                    {p.name}
+            {rows.map((p) => (
+              <tr key={p.id}>
+                <td className="name">
+                  {p.name}
+                  {p.averages && (
                     <span className="gp">
-                      {a.gamesPlayed} GP · {a.minutes.toFixed(0)} MPG
+                      {p.averages.gamesPlayed} GP · {p.averages.minutes.toFixed(0)} MPG
                     </span>
+                  )}
+                </td>
+                {show.showSeasonTeam && (
+                  <>
+                    <td>{p.season}</td>
+                    <td>{p.team}</td>
+                  </>
+                )}
+                {show.showGameDate && (
+                  <td className="game-cell">
+                    {p.gameClue && (
+                      <>
+                        <span>{formatDate(p.gameClue.gameDate)}</span>
+                        <span className="muted small">
+                          {p.gameClue.isHome ? 'vs' : '@'} {p.gameClue.opponent}
+                        </span>
+                      </>
+                    )}
                   </td>
-                  <td>{p.season}</td>
-                  <td>{p.team}</td>
-                  <td className="num">{a.pts.toFixed(1)}</td>
-                  <td className="num">{a.reb.toFixed(1)}</td>
-                  <td className="num">{a.ast.toFixed(1)}</td>
-                  <td className="num">{a.stl.toFixed(1)}</td>
-                  <td className="num">{a.blk.toFixed(1)}</td>
-                  <td className="num">{a.fg3m.toFixed(1)}</td>
-                  <td className="num" title={`${a.fgm.toFixed(1)}/${a.fga.toFixed(1)} per game`}>
-                    {formatPct(a.fgPct)}
-                  </td>
-                  <td className="num" title={`${a.ftm.toFixed(1)}/${a.fta.toFixed(1)} per game`}>
-                    {formatPct(a.ftPct)}
-                  </td>
-                  <td className="num">{a.tov.toFixed(1)}</td>
-                  <td className="num strong">{p.value.toFixed(1)}</td>
-                  <td>
-                    <button className="btn btn-pick" disabled={!canPick || busy} onClick={() => onPick(p)}>
-                      {pickLabel}
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
+                )}
+                {show.showAverages && p.averages && <StatCells a={p.averages} value={p.value} />}
+                <td className={show.showAverages ? undefined : 'pick-cell'}>
+                  <button className="btn btn-pick" disabled={!canPick || busy} onClick={() => onPick(p)}>
+                    {pickLabel}
+                  </button>
+                </td>
+              </tr>
+            ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={COLUMNS.length + 1} className="empty">
+                <td colSpan={columns.length + 1} className="empty">
                   No players match.
                 </td>
               </tr>

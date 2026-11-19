@@ -23,6 +23,22 @@ export interface GameSettings {
   rosterSize: number;
   /** true = at most one season per player in the pool. */
   uniquePlayers: boolean;
+  // What the draft board shows before the reveal (anything hidden isn't sent at all).
+  /** Season and team of each player-season. */
+  showSeasonTeam: boolean;
+  /** Date and opponent of each player-season's locked game: a clue, its stats stay secret. */
+  showGameDate: boolean;
+  /** Season averages and VAL. */
+  showAverages: boolean;
+}
+
+/** Date and opponent of a locked game, without its stats. */
+export interface GameClue {
+  playerSeasonId: number;
+  /** YYYY-MM-DD */
+  gameDate: string;
+  opponent: string;
+  isHome: boolean;
 }
 
 /** A draftable player-season in a game's pool. */

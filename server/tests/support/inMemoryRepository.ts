@@ -2,6 +2,7 @@ import type { PlayerSeasonLogIds } from '../../src/domain/lock.js';
 import type { PoolCandidate } from '../../src/domain/pool.js';
 import type {
   GameMode,
+  GameClue,
   GameSettings,
   GameStatus,
   LockRecord,
@@ -74,6 +75,13 @@ export class InMemoryGameRepository implements GameRepository {
 
   async listLocks(gameId: number): Promise<LockRecord[]> {
     return (this.locks.get(gameId) ?? []).map((l) => ({ ...l }));
+  }
+
+  async listGameClues(gameId: number): Promise<GameClue[]> {
+    return (this.locks.get(gameId) ?? []).map((l) => {
+      const g = this.logs.find((x) => x.gameLogId === l.lockedGameLogId)!;
+      return { playerSeasonId: l.playerSeasonId, gameDate: g.gameDate, opponent: g.opponent, isHome: g.isHome };
+    });
   }
 
   async listLockedLines(gameId: number, playerSeasonIds: number[]): Promise<LockedLine[]> {

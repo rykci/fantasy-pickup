@@ -6,9 +6,40 @@ const MODES: { value: GameMode; title: string; blurb: string }[] = [
   { value: 'pass_and_play', title: '2-Player', blurb: 'Pass-and-play on one screen. Player 1 picks first.' },
 ];
 
+const VISIBILITY: { key: 'showSeasonTeam' | 'showGameDate' | 'showAverages'; label: string; hint: string }[] = [
+  { key: 'showSeasonTeam', label: 'Season & team', hint: 'e.g. 1986-87 · CHI. Off: just the name.' },
+  {
+    key: 'showGameDate',
+    label: 'Chosen game date & opponent',
+    hint: 'A clue, e.g. Dec 25, 1996 vs BOS. The stats from that game stay secret.',
+  },
+  { key: 'showAverages', label: 'Season averages', hint: 'All 9 categories plus VAL, the 9-cat value vs. this pool.' },
+];
+
+/** One line for the collapsed settings, e.g. "Teams of 5 · pool of 15 · you see name, season & team". */
+function settingsSummary(s: GameSettings): string {
+  const shown = [
+    'name',
+    ...(s.showSeasonTeam ? ['season', 'team'] : []),
+    s.showGameDate && 'game date',
+    s.showAverages && 'averages',
+  ].filter(Boolean) as string[];
+  const seen = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} & ${shown.at(-1)}` : shown[0];
+  const size = (n: number) => (Number.isNaN(n) ? '?' : n);
+  return [
+    `Teams of ${size(s.rosterSize)}`,
+    `pool of ${size(s.poolSize)}`,
+    s.uniquePlayers && 'one season per player',
+    `you see ${seen}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 export default function Home({ onStart }: { onStart: (gameId: number) => void }) {
   const [mode, setMode] = useState<GameMode>('vs_cpu');
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +73,7 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
         <h1>Draft a team. Play one night.</h1>
         <p className="lede">
           A snake draft from a random pool of real player-seasons from 1983-84 to 2022-23. Every player-season already
-          has one random real game from that season locked in — you just don't know which one until the draft ends.
+          has one random real game from that season chosen — you just don't know which one until the draft ends.
         </p>
       </section>
 
@@ -61,6 +92,15 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
         ))}
       </section>
 
+      <details
+        className="settings-details"
+        open={settingsOpen || !!settingsError}
+        onToggle={(e) => setSettingsOpen(e.currentTarget.open)}
+      >
+        <summary>
+          <span className="setting-label">Game settings</span>
+          <span className="setting-hint">{settingsSummary(settings)}</span>
+        </summary>
       <section className="settings" aria-label="Game settings">
         <label className="setting">
           <span className="setting-label">Team size</span>
@@ -95,10 +135,31 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
             <span className="setting-hint">Off: the pool can hold 1988 Jordan and 1996 Jordan together.</span>
           </span>
         </label>
+        <fieldset className="setting-group">
+          <legend className="setting-label">What you see while drafting</legend>
+          <span className="setting-hint">
+            Test your ball knowledge: the less you show, the more it comes down to what you know. Everything is
+            revealed after the draft.
+          </span>
+          {VISIBILITY.map((v) => (
+            <label key={v.key} className="setting setting-check">
+              <input
+                type="checkbox"
+                checked={settings[v.key]}
+                onChange={(e) => setSettings((s) => ({ ...s, [v.key]: e.target.checked }))}
+              />
+              <span>
+                <span className="setting-label">{v.label}</span>
+                <span className="setting-hint">{v.hint}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
       </section>
+      </details>
 
       <button className="btn btn-primary btn-lg" onClick={start} disabled={busy || !!settingsError}>
-        {busy ? 'Locking in games…' : 'Start Game'}
+        {busy ? 'Choosing games…' : 'Start Game'}
       </button>
       {(settingsError || error) && <p className="error">{settingsError ?? error}</p>}
 
@@ -113,10 +174,11 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
             <strong>Snake draft.</strong> Order: A B · B A · A B · … until both teams are full.
           </li>
           <li>
-            <strong>Season averages are a guide.</strong> Use them to strategize, but they don't decide anything.
+            <strong>Draft on what you know.</strong> By default you see each player&apos;s name, season and team. You can
+            hide those too, or show the date of their chosen game or their season averages.
           </li>
           <li>
-            <strong>One locked game decides it.</strong> When the game is created, each player-season gets one random
+            <strong>One chosen game decides it.</strong> When the game is created, each player-season gets one random
             regular-season game from that season, hidden until the draft is over. Variance is the point.
           </li>
           <li>

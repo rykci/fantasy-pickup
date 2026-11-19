@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, formatPct, type CategoryResult, type LockedGame, type PlayerView, type RevealResult, type Team } from '../api';
+import { api, formatDate, formatPct, type CategoryResult, type FullPlayerView, type LockedGame, type RevealResult, type Team } from '../api';
 
 type Counting = 'pts' | 'reb' | 'ast' | 'stl' | 'blk' | 'fg3m' | 'tov';
 const COUNTING_COLS: { key: Counting; label: string }[] = [
@@ -10,16 +10,6 @@ const COUNTING_COLS: { key: Counting; label: string }[] = [
   { key: 'blk', label: 'BLK' },
   { key: 'fg3m', label: '3PM' },
 ];
-
-function formatDate(iso: string): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-}
 
 /** Green = well above the season average, red = well below (reversed for TO). */
 function heat(v: number, avg: number, lowerIsBetter = false): string {
@@ -47,13 +37,14 @@ function ShotCell({ made, att, avgPct }: { made: number; att: number; avgPct: nu
   );
 }
 
-function PlayerRow({ p, g, delay }: { p: PlayerView & { pickNumber: number }; g: LockedGame; delay: number }) {
+function PlayerRow({ p, g, delay }: { p: FullPlayerView & { pickNumber?: number }; g: LockedGame; delay: number }) {
   return (
     <tr className="reveal-row" style={{ animationDelay: `${delay}ms` }}>
       <td className="name">
         {p.name}
         <span className="gp">
-          {p.season} · Pick #{p.pickNumber}
+          {p.season} · {p.team}
+          {p.pickNumber !== undefined && ` · Pick #${p.pickNumber}`}
         </span>
       </td>
       <td className="game-cell">
@@ -76,6 +67,25 @@ function PlayerRow({ p, g, delay }: { p: PlayerView & { pickNumber: number }; g:
   );
 }
 
+function LineTableHead() {
+  return (
+    <thead>
+      <tr>
+        <th>Player</th>
+        <th>Chosen game</th>
+        {COUNTING_COLS.map((s) => (
+          <th key={s.key} className="num">
+            {s.label}
+          </th>
+        ))}
+        <th className="num">FG</th>
+        <th className="num">FT</th>
+        <th className="num">TO</th>
+      </tr>
+    </thead>
+  );
+}
+
 export default function Results({ gameId, onPlayAgain }: { gameId: number; onPlayAgain: () => void }) {
   const [result, setResult] = useState<RevealResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +104,7 @@ export default function Results({ gameId, onPlayAgain }: { gameId: number; onPla
       </div>
     );
   }
-  if (!result) return <p className="muted center">Revealing locked games…</p>;
+  if (!result) return <p className="muted center">Revealing the chosen games…</p>;
 
   const { winner, teamLabels, score } = result;
   const headline =
@@ -160,20 +170,7 @@ export default function Results({ gameId, onPlayAgain }: { gameId: number; onPla
               </h2>
               <div className="table-wrap">
                 <table className="line-table">
-                  <thead>
-                    <tr>
-                      <th>Player</th>
-                      <th>Locked game</th>
-                      {COUNTING_COLS.map((s) => (
-                        <th key={s.key} className="num">
-                          {s.label}
-                        </th>
-                      ))}
-                      <th className="num">FG</th>
-                      <th className="num">FT</th>
-                      <th className="num">TO</th>
-                    </tr>
-                  </thead>
+                  <LineTableHead />
                   <tbody>
                     {team.players.map((p, i) => (
                       <PlayerRow key={p.id} p={p} g={p.lockedGame} delay={300 + i * 120} />
@@ -202,6 +199,25 @@ export default function Results({ gameId, onPlayAgain }: { gameId: number; onPla
           );
         })}
       </div>
+
+      {result.undrafted.length > 0 && (
+        <section className="panel team-card undrafted">
+          <h2>Undrafted</h2>
+          <p className="muted small">
+            Their games were chosen too, but don&apos;t count for either team. Best season first.
+          </p>
+          <div className="table-wrap">
+            <table className="line-table">
+              <LineTableHead />
+              <tbody>
+                {result.undrafted.map((p, i) => (
+                  <PlayerRow key={p.id} p={p} g={p.lockedGame} delay={600 + i * 60} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       <div className="center">
         <button className="btn btn-primary btn-lg" onClick={onPlayAgain}>

@@ -143,6 +143,13 @@ model Game {
   rosterSize    Int         @map("roster_size")
   /// true = at most one season per player in the pool
   uniquePlayers Boolean     @map("unique_players")
+  // What the draft board shows before the reveal. Anything hidden is not sent at all.
+  /// Season and team of each player-season
+  showSeasonTeam Boolean    @default(true) @map("show_season_team")
+  /// Date and opponent of each player-season's locked game (a clue; its stats stay secret)
+  showGameDate   Boolean    @default(false) @map("show_game_date")
+  /// Season averages and VAL
+  showAverages   Boolean    @default(false) @map("show_averages")
   winner        GameWinner?
   /// Categories won by each team, set on reveal (e.g. 5-4)
   scoreA        Int?        @map("score_a")

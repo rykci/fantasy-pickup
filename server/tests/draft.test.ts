@@ -59,7 +59,7 @@ describe('snake draft order', () => {
 });
 
 describe('validateSettings', () => {
-  const ok = (poolSize: number, rosterSize: number) => validateSettings({ poolSize, rosterSize, uniquePlayers: false });
+  const ok = (poolSize: number, rosterSize: number) => validateSettings({ ...DEFAULT_SETTINGS, poolSize, rosterSize });
 
   it('accepts the defaults and the boundaries', () => {
     expect(validateSettings(DEFAULT_SETTINGS)).toEqual(DEFAULT_SETTINGS);

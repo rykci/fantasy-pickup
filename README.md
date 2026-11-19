@@ -46,21 +46,26 @@ Open **http://localhost:5173**.
 
 ```bash
 cd server
-npm test           # 69 unit tests — no database needed
-npm run test:db    # 10 integration tests against the docker Postgres (needs migrate + ingest)
+npm test           # 77 unit tests — no database needed
+npm run test:db    # 11 integration tests against the docker Postgres (needs migrate + ingest)
 ```
 
 ---
 
 ## How to play a full game
 
-1. **Home** — choose **Solo vs CPU** or **2-Player** and the settings, then **Start Game**:
+1. **Home** — choose **Solo vs CPU** or **2-Player**, optionally open **Game settings** (collapsed by default;
+   its summary line shows the current choices), then **Start Game**:
 
    | Setting | Default | Range |
    |---|---|---|
    | Team size (= rounds) | 5 | 1–13 |
-   | Pool size | 24 | 2 × team size – 200 |
+   | Pool size | 15 | 2 × team size – 200 |
    | One season per player | off | off: the pool may hold 1988 Jordan *and* 1996 Jordan |
+   | **What you see while drafting** | | anything off is hidden until the reveal |
+   | ↳ Season & team | on | off: just the player's name |
+   | ↳ Chosen game date & opponent | off | on: a clue such as "Dec 25, 1996 vs BOS" (that game's stats stay secret) |
+   | ↳ Season averages | off | on: all 9 categories plus VAL |
 
    At this moment the server draws the pool at random from the **top 100 player-seasons of every season**
    (see [Data](#data)) and locks one random game from that season for each. Locked games are never shown or
@@ -68,13 +73,20 @@ npm run test:db    # 10 integration tests against the docker Postgres (needs mig
 2. **Draft** — the banner shows whose turn it is, the round and pick number. The strip under it shows the full
    snake order: `A B · B A · A B · …`.
    - Sort any column, search by name, team or season (e.g. `1996`).
-   - **VAL** is each player-season's 9-cat value *relative to this pool* (sum of z-scores; 0 = pool average).
+   - **Ball knowledge:** the board shows only what the settings allow (default: name, season, team). Hidden
+     fields aren't sent by the server at all until the reveal, so they can't be found in dev tools. Without
+     averages the board is alphabetical, and same-name entries are in a per-game shuffled order, so the order
+     doesn't give away the ranking or the season. The CPU always drafts by VAL.
+   - **Season averages (if shown):** all 9 categories plus **VAL**, each player-season's 9-cat value *relative to
+     this pool* (sum of z-scores; 0 = pool average).
    - **vs CPU:** you are Team A and pick first. The CPU picks right after you, twice in a row when the snake order
      gives it two picks.
    - **2-Player:** after each pick the banner tells you to pass the device.
-3. After the last pick, click **Reveal locked games →**.
+3. After the last pick, click **Reveal the games →**.
 4. **Results** — each player's locked game (date, opponent, minutes, full line; green/red = well above/below their
    season average), team totals per category with the winner highlighted, and the final score, e.g. **5–4**.
+   Below the teams, an **Undrafted** table shows every player nobody picked with their chosen game too (best
+   season first), so you can see who you missed. They don't count for either team.
 
 The URL tracks the game (`?game=12`), so refreshing mid-draft keeps your place.
 
@@ -105,10 +117,10 @@ All JSON. The draft rules are enforced on the server, so the UI cannot bypass th
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 24, "rosterSize"?: 5, "uniquePlayers"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
-| `GET` | `/api/games/:id` | — | Status, settings, current turn, draft order, rosters, available player-seasons with season averages + VAL, and picks. **Never includes locked games.** |
+| `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 15, "rosterSize"?: 5, "uniquePlayers"?: false, "showSeasonTeam"?: true, "showGameDate"?: false, "showAverages"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
+| `GET` | `/api/games/:id` | — | Status, settings, current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
 | `POST` | `/api/games/:id/picks` | `{ "playerSeasonId": 1234, "team"?: "A" \| "B" }` | Validates the turn, that the player-season is available and in the pool, and that the draft isn't finished. In `vs_cpu`, `team` defaults to `A` and the CPU's picks are returned in `autoPicks`. |
-| `POST` | `/api/games/:id/reveal` | — | `409` until the last pick. Returns locked lines, team totals, category winners, score, winner and `decidedBy`. Idempotent. |
+| `POST` | `/api/games/:id/reveal` | — | `409` until the last pick. Returns locked lines, team totals, category winners, score, winner, `decidedBy`, and `undrafted` (every pool player nobody picked, with their locked game). Idempotent. |
 
 Errors look like `{ "error": { "code": "NOT_YOUR_TURN", "message": "..." } }`.
 Codes: `VALIDATION_ERROR` / `INVALID_SETTINGS` / `POOL_TOO_LARGE` / `PLAYER_NOT_IN_POOL` (400), `NOT_FOUND` (404),
@@ -136,7 +148,7 @@ players ──< player_seasons ──< game_logs           (one row per complete
 | `players` | `id`, `name` (unique; see identity notes below) |
 | `player_seasons` | `id`, `player_id`, `season` ("1986-87"), `team`, `games_played`, per-game `minutes pts reb ast stl blk fg3m fgm fga ftm fta tov`, `value`, `season_rank` · unique `(player_id, season)` |
 | `game_logs` | `id`, `player_season_id`, `game_id`, `game_date`, `team`, `opponent`, `is_home`, `minutes`, the 11 box-score stats · unique `(player_season_id, game_id)` |
-| `games` | `id`, `mode`, `status` (`drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `winner`, `score_a`, `score_b`, timestamps |
+| `games` | `id`, `mode`, `status` (`drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `show_season_team`, `show_game_date`, `show_averages`, `winner`, `score_a`, `score_b`, timestamps |
 | `game_players` | PK `(game_id, player_season_id)`, `locked_game_log_id` |
 | `draft_picks` | `id`, `game_id`, `team`, `pick_number`, `player_season_id`, `picked_at` · unique `(game_id, pick_number)` and `(game_id, player_season_id)` |
 
@@ -211,5 +223,9 @@ data. They are unused by v1.1 and kept as a starting point for filling 2023-25.
 
 ## Scope (v1.1)
 
-No auth, accounts, online multiplayer, trades or bench. Not yet: draft signposts / category badges, tiered pool
-sampling, a "Legends" mode, era filters, UI polish and animations beyond a basic fade-in on reveal.
+No auth, accounts, online multiplayer, trades or bench.
+
+The UI calls each player-season's secret game its **chosen game**; the code and schema call it the *locked* game.
+
+**Next version:** a more suspenseful locked-game reveal (today it's a basic fade-in).
+**Later:** draft signposts / category badges, tiered pool sampling, a "Legends" mode, era filters, UI polish.
