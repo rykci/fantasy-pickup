@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type GameState, type PlayerView } from '../api';
+import CoinFlip from '../components/CoinFlip';
 import DraftOrder from '../components/DraftOrder';
 import PlayerTable from '../components/PlayerTable';
 import Roster from '../components/Roster';
@@ -7,6 +8,15 @@ import Roster from '../components/Roster';
 /** "1986-87 Michael Jordan", or just the name when seasons are hidden. */
 function withSeason(season: string | null, name: string): string {
   return season ? `${season} ${name}` : name;
+}
+
+const flipKey = (id: number) => `fp-flip-seen-${id}`;
+function flipSeen(id: number): boolean {
+  try {
+    return localStorage.getItem(flipKey(id)) === '1';
+  } catch {
+    return false;
+  }
 }
 
 interface Props {
@@ -20,6 +30,22 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [flipDone, setFlipDone] = useState(() => flipSeen(gameId));
+
+  function finishFlip(s: GameState) {
+    try {
+      localStorage.setItem(flipKey(gameId), '1');
+    } catch {
+      // Not remembered; the flip just plays again on refresh.
+    }
+    setFlipDone(true);
+    const cpuFirst = s.picks.filter((p) => s.cpuTeams.includes(p.team));
+    if (cpuFirst.length > 0) {
+      setNotice(
+        `CPU won the flip and drafted ${cpuFirst.map((p) => `${withSeason(p.season, p.playerName)} (#${p.pickNumber})`).join(' and ')}.`,
+      );
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -82,6 +108,9 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
 
   return (
     <div className="draft">
+      {!flipDone && state.status === 'drafting' && (
+        <CoinFlip winner={state.firstTeam} labels={state.teamLabels} onDone={() => finishFlip(state)} />
+      )}
       <div className={`turn-banner ${turn ? `team-${turn.team}` : 'complete'}`} role="status" aria-live="polite">
         {turn ? (
           <>

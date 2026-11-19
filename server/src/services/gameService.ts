@@ -103,6 +103,8 @@ export interface GameStateView {
   teamLabels: Record<Team, string>;
   /** Which teams are controlled by the CPU (empty in pass-and-play). */
   cpuTeams: Team[];
+  /** Coin-flip winner: picks first. */
+  firstTeam: Team;
   currentTurn: { pickNumber: number; round: number; team: Team; label: string } | null;
   draftOrder: { pickNumber: number; round: number; team: Team; playerSeasonId: number | null }[];
   rosters: Record<Team, PlayerView[]>;
@@ -147,6 +149,8 @@ export class GameService {
   constructor(
     private readonly repo: GameRepository,
     private readonly rng: Rng = secureRng,
+    /** Who picks first. A fair coin by default; tests can fix it. */
+    private readonly coinFlip: () => Team = () => (rng() < 0.5 ? 'A' : 'B'),
   ) {}
 
   /**
@@ -168,7 +172,14 @@ export class GameService {
       throw e;
     }
     const locks = lockRandomGames(await this.repo.listGameLogIds(poolIds), this.rng);
-    const game = await this.repo.createGame(mode, s, locks);
+    const game = await this.repo.createGame(mode, s, this.coinFlip(), locks);
+    if (mode === 'vs_cpu' && game.firstTeam === CPU_TEAM) {
+      // The CPU won the coin flip: it makes the first pick right away.
+      await this.repo.withGameLock(game.id, async (repo) => {
+        const [pool, picks] = await Promise.all([repo.listPool(game.id), repo.listPicks(game.id)]);
+        await this.cpuPicks(repo, game, pool, picks);
+      });
+    }
     return this.getState(game.id);
   }
 
@@ -210,33 +221,19 @@ export class GameService {
         }
       }
 
-      const slot = validatePick({ picks, rosterSize, poolIds, playerSeasonId: input.playerSeasonId, team: actingTeam });
+      const slot = validatePick({
+        picks,
+        rosterSize,
+        firstTeam: game.firstTeam,
+        poolIds,
+        playerSeasonId: input.playerSeasonId,
+        team: actingTeam,
+      });
       picks.push(
         await repo.addPick(gameId, { pickNumber: slot.pickNumber, team: slot.team, playerSeasonId: input.playerSeasonId }),
       );
 
-      const autoPicks: number[] = [];
-      if (game.mode === 'vs_cpu') {
-        const values = poolValues(pool);
-        while (picks.length < total && teamForPick(picks.length + 1) === CPU_TEAM) {
-          const pickNumber = picks.length + 1;
-          const taken = new Set(picks.map((p) => p.playerSeasonId));
-          const choice = cpuChoosePlayer(
-            pool.filter((p) => !taken.has(p.id)),
-            values,
-            roundForPick(pickNumber),
-            rosterSize,
-            this.rng,
-          );
-          // Same validation path as a human pick.
-          const cpuSlot = validatePick({ picks, rosterSize, poolIds, playerSeasonId: choice.id, team: CPU_TEAM });
-          picks.push(
-            await repo.addPick(gameId, { pickNumber: cpuSlot.pickNumber, team: CPU_TEAM, playerSeasonId: choice.id }),
-          );
-          autoPicks.push(pickNumber);
-        }
-      }
-
+      const autoPicks = game.mode === 'vs_cpu' ? await this.cpuPicks(repo, game, pool, picks) : [];
       if (picks.length === total) {
         await repo.setStatus(gameId, 'draft_complete');
       }
@@ -245,6 +242,39 @@ export class GameService {
 
     const state = await this.getState(gameId);
     return { state, autoPicks: state.picks.filter((p) => autoPickNumbers.includes(p.pickNumber)) };
+  }
+
+  /**
+   * The CPU picks while it's on the clock (snake order means it sometimes has two in a row).
+   * Pushes onto `picks` and returns the pick numbers it made.
+   */
+  private async cpuPicks(
+    repo: GameRepository,
+    game: GameRecord,
+    pool: PoolPlayer[],
+    picks: PickRecord[],
+  ): Promise<number[]> {
+    const { rosterSize, firstTeam } = game;
+    const total = totalPicks(rosterSize);
+    const poolIds = new Set(pool.map((p) => p.id));
+    const values = poolValues(pool);
+    const made: number[] = [];
+    while (picks.length < total && teamForPick(picks.length + 1, firstTeam) === CPU_TEAM) {
+      const pickNumber = picks.length + 1;
+      const taken = new Set(picks.map((p) => p.playerSeasonId));
+      const choice = cpuChoosePlayer(
+        pool.filter((p) => !taken.has(p.id)),
+        values,
+        roundForPick(pickNumber),
+        rosterSize,
+        this.rng,
+      );
+      // Same validation path as a human pick.
+      const slot = validatePick({ picks, rosterSize, firstTeam, poolIds, playerSeasonId: choice.id, team: CPU_TEAM });
+      picks.push(await repo.addPick(game.id, { pickNumber: slot.pickNumber, team: CPU_TEAM, playerSeasonId: choice.id }));
+      made.push(pickNumber);
+    }
+    return made;
   }
 
   /**
@@ -411,7 +441,7 @@ function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[], c
         x.name.localeCompare(y.name) || shuffleKey(game.id, x.id) - shuffleKey(game.id, y.id);
   const pickedIds = new Set(picks.map((p) => p.playerSeasonId));
   const byPick = new Map(picks.map((p) => [p.pickNumber, p.playerSeasonId]));
-  const slot = currentSlot(picks.length, game.rosterSize);
+  const slot = currentSlot(picks.length, game.rosterSize, game.firstTeam);
   const roster = (t: Team) => picks.filter((p) => p.team === t).map((p) => views.get(p.playerSeasonId)!);
 
   return {
@@ -430,8 +460,9 @@ function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[], c
     totalPicks: totalPicks(game.rosterSize),
     teamLabels: labels,
     cpuTeams: game.mode === 'vs_cpu' ? [CPU_TEAM] : [],
+    firstTeam: game.firstTeam,
     currentTurn: slot ? { ...slot, label: labels[slot.team] } : null,
-    draftOrder: draftOrder(game.rosterSize).map((s) => ({ ...s, playerSeasonId: byPick.get(s.pickNumber) ?? null })),
+    draftOrder: draftOrder(game.rosterSize, game.firstTeam).map((s) => ({ ...s, playerSeasonId: byPick.get(s.pickNumber) ?? null })),
     rosters: { A: roster('A'), B: roster('B') },
     available: [...views.values()].filter((v) => !pickedIds.has(v.id)).sort(boardOrder),
     picks: picks.map((p) => {

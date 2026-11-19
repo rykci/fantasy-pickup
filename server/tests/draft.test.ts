@@ -37,7 +37,22 @@ describe('snake draft order', () => {
     expect(roundForPick(26)).toBe(13);
   });
 
-  it('matches the formula used by the DB CHECK constraint', () => {
+  it('the coin-flip winner picks first; B first mirrors A first', () => {
+    expect(draftOrder(5, 'B').map((s) => s.team).join('')).toBe('BAABBAABBA');
+    expect(currentSlot(0, 5, 'B')).toEqual({ pickNumber: 1, round: 1, team: 'B' });
+    expect(currentSlot(2, 5, 'B')).toEqual({ pickNumber: 3, round: 2, team: 'A' });
+    for (let p = 1; p <= 26; p++) expect(teamForPick(p, 'B')).not.toBe(teamForPick(p, 'A'));
+  });
+
+  it('validatePick follows the coin flip', () => {
+    const pool = new Set([1, 2, 3]);
+    expect(validatePick({ picks: [], rosterSize: 1, firstTeam: 'B', poolIds: pool, playerSeasonId: 1 }).team).toBe('B');
+    expect(() =>
+      validatePick({ picks: [], rosterSize: 1, firstTeam: 'B', poolIds: pool, playerSeasonId: 1, team: 'A' }),
+    ).toThrow(/Team B's turn/);
+  });
+
+  it('matches the formula used by the DB trigger', () => {
     for (let p = 1; p <= 26; p++) {
       const sqlTeam: Team = (Math.floor((p - 1) / 2) + ((p - 1) % 2)) % 2 === 0 ? 'A' : 'B';
       expect(teamForPick(p)).toBe(sqlTeam);
@@ -86,7 +101,7 @@ describe('validatePick', () => {
   const picksSoFar = (n: number) =>
     Array.from({ length: n }, (_, i) => ({ pickNumber: i + 1, team: teamForPick(i + 1), playerSeasonId: i + 1 }));
   const attempt = (n: number, playerSeasonId: number, team?: Team, rosterSize = 5) =>
-    validatePick({ picks: picksSoFar(n), rosterSize, poolIds: pool, playerSeasonId, team });
+    validatePick({ picks: picksSoFar(n), rosterSize, firstTeam: 'A', poolIds: pool, playerSeasonId, team });
 
   function codeOf(fn: () => unknown): string | undefined {
     try {
@@ -124,7 +139,7 @@ describe('validatePick', () => {
 
   it('does not mutate the picks it is given', () => {
     const picks = picksSoFar(1);
-    validatePick({ picks, rosterSize: 5, poolIds: pool, playerSeasonId: 7 });
+    validatePick({ picks, rosterSize: 5, firstTeam: 'A', poolIds: pool, playerSeasonId: 7 });
     expect(picks).toHaveLength(1);
   });
 });

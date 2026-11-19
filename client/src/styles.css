@@ -684,9 +684,9 @@ td.empty {
 .team-card.team-B {
   border-top: 3px solid var(--team-b);
 }
-.game-cell {
-  display: flex;
-  flex-direction: column;
+.game-cell > span,
+.game-landed > span {
+  display: block;
 }
 td.hot {
   color: var(--good);
@@ -828,4 +828,398 @@ tfoot td {
 .team-card.undrafted {
   border-top: 3px solid var(--border);
   opacity: 0.92;
+}
+
+/* ---------------------------------------------------------- reveal */
+
+.btn-small {
+  padding: 5px 10px;
+  font-size: 0.85rem;
+}
+
+/* Live scoreboard, pinned while the box scores fill in. */
+.reveal-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+.sb-score {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+}
+.sb-team {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.7;
+  transition: opacity 0.3s;
+}
+.sb-team.leading {
+  opacity: 1;
+}
+.sb-label {
+  color: var(--muted);
+  font-weight: 600;
+}
+.sb-num {
+  font-size: 2.2rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  animation: pop 0.35s ease-out;
+}
+.sb-team.team-A .sb-num {
+  color: var(--team-a);
+}
+.sb-team.team-B .sb-num {
+  color: var(--team-b);
+}
+.sb-dash {
+  color: var(--muted);
+  font-size: 1.4rem;
+}
+.sb-cats {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 4px;
+  margin-top: 10px;
+}
+.sb-cat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  border-top: 3px solid transparent;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.3s, border-color 0.3s;
+  min-width: 0;
+}
+.sb-cat.win-A {
+  background: var(--team-a-soft);
+  border-top-color: var(--team-a);
+}
+.sb-cat.win-B {
+  background: var(--team-b-soft);
+  border-top-color: var(--team-b);
+}
+.sb-cat-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.sb-cat-val {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.reveal-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.reveal-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.clutch-note {
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Box score rows while they reveal. */
+.box-row {
+  scroll-margin-top: 200px;
+  scroll-margin-bottom: 24px;
+  transition: background 0.3s;
+}
+.box-row.rolling,
+.box-row.filling {
+  background: rgba(242, 140, 40, 0.08);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.team-B .box-row.rolling,
+.team-B .box-row.filling {
+  background: rgba(63, 182, 217, 0.08);
+  box-shadow: inset 3px 0 0 var(--team-b);
+}
+.game-rolling {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  filter: blur(0.4px);
+}
+.game-landed {
+  display: block;
+}
+td.blank {
+  color: var(--border);
+}
+.stat-in {
+  animation: land 0.28s ease-out;
+}
+td.stat-in {
+  display: table-cell;
+}
+
+/* The final result. */
+.result-banner.final {
+  padding: 28px 16px 20px;
+}
+.result-banner.final .score-num {
+  font-size: 4.2rem;
+}
+.final-cats {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 1000px;
+  margin: 22px auto 12px;
+}
+.final-cat {
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  justify-items: center;
+  gap: 2px;
+  padding: 12px 4px 10px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-top-width: 4px;
+  min-height: 132px;
+  font-variant-numeric: tabular-nums;
+}
+.final-cat.win-A {
+  border-top-color: var(--team-a);
+  background: linear-gradient(180deg, var(--team-a-soft), var(--panel-2));
+}
+.final-cat.win-B {
+  border-top-color: var(--team-b);
+  background: linear-gradient(180deg, var(--team-b-soft), var(--panel-2));
+}
+.final-cat-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-weight: 800;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.final-cat-note {
+  font-size: 0.65rem;
+  font-weight: 500;
+}
+.final-cat-val {
+  font-size: 1.05rem;
+  color: var(--muted);
+}
+.final-cat-val.won {
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+.final-cat-val.won.team-A {
+  color: var(--team-a);
+}
+.final-cat-val.won.team-B {
+  color: var(--team-b);
+}
+.final-cat-winner {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.final-cat.win-A .final-cat-winner {
+  color: var(--team-a);
+}
+.final-cat.win-B .final-cat-winner {
+  color: var(--team-b);
+}
+.result-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@keyframes land {
+  from {
+    transform: scale(1.35);
+    color: var(--text);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-num,
+  .stat-in,
+  .clutch-note {
+    animation: none;
+  }
+}
+@media (max-width: 900px) {
+  .final-cats {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .sb-cats {
+    grid-template-columns: repeat(5, 1fr);
+  }
+  .sb-num {
+    font-size: 1.8rem;
+  }
+  .final-cats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .result-banner.final .score-num {
+    font-size: 3rem;
+  }
+  .box-row {
+    scroll-margin-top: 260px;
+  }
+}
+
+/* ---------------------------------------------------------- coin flip */
+
+.coin-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(8, 10, 14, 0.78);
+  backdrop-filter: blur(3px);
+  animation: fade-in 0.25s ease-out;
+}
+.coin-card {
+  width: min(380px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px 20px 22px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.coin-kicker {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.coin-stage {
+  height: 200px;
+  display: grid;
+  place-items: end center;
+  perspective: 700px;
+}
+.coin-toss {
+  animation: coin-toss 2s forwards;
+}
+.coin {
+  position: relative;
+  width: 130px;
+  height: 130px;
+  transform-style: preserve-3d;
+  /* One smooth slow-down over the whole flip; lands exactly when the toss does. */
+  animation-duration: 2s;
+  animation-timing-function: cubic-bezier(0.3, 0.45, 0.5, 1);
+  animation-fill-mode: forwards;
+}
+.coin.land-A {
+  animation-name: coin-spin-A;
+}
+.coin.land-B {
+  animation-name: coin-spin-B;
+}
+.coin-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.25rem;
+  color: #11151b;
+  backface-visibility: hidden;
+  box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.25), inset 0 0 0 10px rgba(0, 0, 0, 0.12);
+}
+.face-A {
+  background: radial-gradient(circle at 35% 30%, #ffb46b, var(--team-a));
+}
+.face-B {
+  background: radial-gradient(circle at 35% 30%, #8fdcf2, var(--team-b));
+  transform: rotateX(180deg);
+}
+.coin-result {
+  margin: 0;
+  min-height: 1.6em;
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+.coin-result.shown {
+  animation: pop 0.4s ease-out;
+}
+/* Up fast and decelerating, down accelerating like gravity. */
+@keyframes coin-toss {
+  0% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.33, 1, 0.68, 1);
+  }
+  50% {
+    transform: translateY(-90px);
+    animation-timing-function: cubic-bezier(0.32, 0, 0.67, 0);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+/* 6 turns lands on A, 6.5 on B. */
+@keyframes coin-spin-A {
+  from {
+    transform: rotateX(0);
+  }
+  to {
+    transform: rotateX(2160deg);
+  }
+}
+@keyframes coin-spin-B {
+  from {
+    transform: rotateX(0);
+  }
+  to {
+    transform: rotateX(2340deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .coin,
+  .coin-toss {
+    animation-duration: 0.01s;
+  }
 }

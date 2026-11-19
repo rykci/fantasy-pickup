@@ -20,6 +20,8 @@ export interface GameRecord extends GameSettings {
   winner: Winner | null;
   scoreA: number | null;
   scoreB: number | null;
+  /** Coin-flip winner: picks first. */
+  firstTeam: Team;
   createdAt: Date;
   revealedAt: Date | null;
 }
@@ -40,7 +42,7 @@ export interface GameRepository {
   /** The ids of every game log of the given player-seasons. */
   listGameLogIds(playerSeasonIds: number[]): Promise<PlayerSeasonLogIds[]>;
   /** Creates the game and its locked games atomically. */
-  createGame(mode: GameMode, settings: GameSettings, locks: LockRecord[]): Promise<GameRecord>;
+  createGame(mode: GameMode, settings: GameSettings, firstTeam: Team, locks: LockRecord[]): Promise<GameRecord>;
   findGame(gameId: number): Promise<GameRecord | null>;
   /** The game's pool, with season averages. Never includes the locked games. */
   listPool(gameId: number): Promise<PoolPlayer[]>;

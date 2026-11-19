@@ -7,7 +7,9 @@ import { createPrismaGameRepository } from '../src/repo/prismaGameRepository.js'
 import { GameService } from '../src/services/gameService.js';
 
 const prisma = new PrismaClient();
-const service = new GameService(createPrismaGameRepository(prisma));
+const repo = createPrismaGameRepository(prisma);
+// Team A picks first unless a test says otherwise.
+const service = new GameService(repo, undefined, () => 'A');
 const createdGameIds: number[] = [];
 
 beforeAll(async () => {
@@ -65,6 +67,18 @@ describe('database invariants', () => {
   it('uniquePlayers: no player appears twice in the pool', async () => {
     const { available } = await newGame('pass_and_play', { poolSize: 200, uniquePlayers: true });
     expect(new Set(available.map((p) => p.playerId)).size).toBe(200);
+  });
+
+  it('the snake-order trigger follows the coin flip, which is fixed once picks exist', async () => {
+    const { id, available, firstTeam } = await new GameService(repo, undefined, () => 'B').createGame('pass_and_play');
+    createdGameIds.push(id);
+    expect(firstTeam).toBe('B');
+    const other = 'A';
+    await expect(
+      prisma.draftPick.create({ data: { gameId: id, pickNumber: 1, team: other, playerSeasonId: available[0].id } }),
+    ).rejects.toThrow(/belongs to team/);
+    await prisma.draftPick.create({ data: { gameId: id, pickNumber: 1, team: firstTeam, playerSeasonId: available[0].id } });
+    await expect(prisma.game.update({ where: { id }, data: { firstTeam: other } })).rejects.toThrow(/fixed once picks/);
   });
 
   it('trigger blocks changing a locked game', async () => {

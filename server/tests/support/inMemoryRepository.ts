@@ -41,11 +41,12 @@ export class InMemoryGameRepository implements GameRepository {
     }));
   }
 
-  async createGame(mode: GameMode, settings: GameSettings, locks: LockRecord[]): Promise<GameRecord> {
+  async createGame(mode: GameMode, settings: GameSettings, firstTeam: Team, locks: LockRecord[]): Promise<GameRecord> {
     const game: GameRecord = {
       id: this.nextId++,
       mode,
       ...settings,
+      firstTeam,
       status: 'drafting',
       winner: null,
       scoreA: null,

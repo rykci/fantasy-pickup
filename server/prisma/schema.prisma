@@ -143,6 +143,8 @@ model Game {
   rosterSize    Int         @map("roster_size")
   /// true = at most one season per player in the pool
   uniquePlayers Boolean     @map("unique_players")
+  /// Coin flip at creation: this team picks first (snake order follows from it)
+  firstTeam     TeamSide    @default(A) @map("first_team")
   // What the draft board shows before the reveal. Anything hidden is not sent at all.
   /// Season and team of each player-season
   showSeasonTeam Boolean    @default(true) @map("show_season_team")

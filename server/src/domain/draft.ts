@@ -52,29 +52,34 @@ export function roundForPick(pickNumber: number): number {
   return Math.ceil(pickNumber / TEAMS.length);
 }
 
-/**
- * Snake draft: odd rounds go A, B; even rounds go B, A.
- *   1:A 2:B | 3:B 4:A | 5:A 6:B | 7:B 8:A | ...
- * Doesn't depend on the number of rounds. (Mirrored by a CHECK constraint on draft_picks.)
- */
-export function teamForPick(pickNumber: number): Team {
-  assertPickNumber(pickNumber);
-  const round = roundForPick(pickNumber);
-  const slot = (pickNumber - 1) % TEAMS.length;
-  return round % 2 === 1 ? TEAMS[slot] : TEAMS[TEAMS.length - 1 - slot];
+export function otherTeam(t: Team): Team {
+  return t === 'A' ? 'B' : 'A';
 }
 
-export function draftOrder(rosterSize: number): DraftSlot[] {
-  return Array.from({ length: totalPicks(rosterSize) }, (_, i) => slotFor(i + 1));
+/**
+ * Snake draft. `first` (the coin-flip winner) picks first in odd rounds, second in even ones.
+ *   first = A:  1:A 2:B | 3:B 4:A | 5:A 6:B | ...
+ *   first = B:  1:B 2:A | 3:A 4:B | 5:B 6:A | ...
+ * Doesn't depend on the number of rounds. (Mirrored by the draft_picks_valid trigger.)
+ */
+export function teamForPick(pickNumber: number, first: Team = 'A'): Team {
+  assertPickNumber(pickNumber);
+  const round = roundForPick(pickNumber);
+  const firstInSlot = (pickNumber - 1) % TEAMS.length === 0;
+  return firstInSlot === (round % 2 === 1) ? first : otherTeam(first);
+}
+
+export function draftOrder(rosterSize: number, first: Team = 'A'): DraftSlot[] {
+  return Array.from({ length: totalPicks(rosterSize) }, (_, i) => slotFor(i + 1, first));
 }
 
 /** The slot that is on the clock, or null when the draft is complete. */
-export function currentSlot(picksMade: number, rosterSize: number): DraftSlot | null {
-  return picksMade >= totalPicks(rosterSize) ? null : slotFor(picksMade + 1);
+export function currentSlot(picksMade: number, rosterSize: number, first: Team = 'A'): DraftSlot | null {
+  return picksMade >= totalPicks(rosterSize) ? null : slotFor(picksMade + 1, first);
 }
 
-function slotFor(pickNumber: number): DraftSlot {
-  return { pickNumber, round: roundForPick(pickNumber), team: teamForPick(pickNumber) };
+function slotFor(pickNumber: number, first: Team): DraftSlot {
+  return { pickNumber, round: roundForPick(pickNumber), team: teamForPick(pickNumber, first) };
 }
 
 function assertPickNumber(n: number): void {
@@ -104,6 +109,8 @@ export class DraftRuleError extends Error {
 export interface PickAttempt {
   picks: readonly Pick<PickRecord, 'pickNumber' | 'team' | 'playerSeasonId'>[];
   rosterSize: number;
+  /** The coin-flip winner, who picks first. */
+  firstTeam: Team;
   poolIds: ReadonlySet<number>;
   playerSeasonId: number;
   /** Team claiming to make the pick. Omit to pick for whoever is on the clock. */
@@ -114,8 +121,8 @@ export interface PickAttempt {
  * Validates a pick against the current draft state and returns the slot it fills.
  * Throws DraftRuleError on any violation. Pure: does not mutate its input.
  */
-export function validatePick({ picks, rosterSize, poolIds, playerSeasonId, team }: PickAttempt): DraftSlot {
-  const slot = currentSlot(picks.length, rosterSize);
+export function validatePick({ picks, rosterSize, firstTeam, poolIds, playerSeasonId, team }: PickAttempt): DraftSlot {
+  const slot = currentSlot(picks.length, rosterSize, firstTeam);
   if (!slot) {
     throw new DraftRuleError('DRAFT_COMPLETE', 'The draft is already complete.');
   }

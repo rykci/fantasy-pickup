@@ -46,8 +46,8 @@ Open **http://localhost:5173**.
 
 ```bash
 cd server
-npm test           # 77 unit tests — no database needed
-npm run test:db    # 11 integration tests against the docker Postgres (needs migrate + ingest)
+npm test           # 82 unit tests — no database needed
+npm run test:db    # 13 integration tests against the docker Postgres (needs migrate + ingest)
 ```
 
 ---
@@ -69,9 +69,11 @@ npm run test:db    # 11 integration tests against the docker Postgres (needs mig
 
    At this moment the server draws the pool at random from the **top 100 player-seasons of every season**
    (see [Data](#data)) and locks one random game from that season for each. Locked games are never shown or
-   changed until the reveal.
-2. **Draft** — the banner shows whose turn it is, the round and pick number. The strip under it shows the full
-   snake order: `A B · B A · A B · …`.
+   changed until the reveal. It also flips a coin for the first pick.
+2. **Coin flip** — opening the draft plays the flip: a coin with each side's name spins and lands on the winner, who
+   picks first. (The server already flipped it when the game was created; this plays it back. Shown once per game.)
+3. **Draft** — the banner shows whose turn it is, the round and pick number. The strip under it shows the full
+   snake order, starting with the flip winner: `A B · B A · A B · …` or `B A · A B · B A · …`.
    - Sort any column, search by name, team or season (e.g. `1996`).
    - **Ball knowledge:** the board shows only what the settings allow (default: name, season, team). Hidden
      fields aren't sent by the server at all until the reveal, so they can't be found in dev tools. Without
@@ -79,14 +81,29 @@ npm run test:db    # 11 integration tests against the docker Postgres (needs mig
      doesn't give away the ranking or the season. The CPU always drafts by VAL.
    - **Season averages (if shown):** all 9 categories plus **VAL**, each player-season's 9-cat value *relative to
      this pool* (sum of z-scores; 0 = pool average).
-   - **vs CPU:** you are Team A and pick first. The CPU picks right after you, twice in a row when the snake order
-     gives it two picks.
+   - **vs CPU:** you are Team A. If the CPU wins the flip, it has already made pick 1 when the draft opens. It picks
+     as soon as it's on the clock, twice in a row when the snake order gives it two picks.
    - **2-Player:** after each pick the banner tells you to pass the device.
-3. After the last pick, click **Reveal the games →**.
-4. **Results** — each player's locked game (date, opponent, minutes, full line; green/red = well above/below their
+4. After the last pick, click **Reveal the games →**.
+5. **The reveal** happens on the results page itself. Both box scores start blank, and it goes round by round: each
+   team's 1st pick rolls together, then each team's 2nd pick, and so on, so the scoreboard stays balanced. Both
+   chosen games spin through dates and opponents from that season and land, then both players' stats fill in left
+   to right, the same stat at the same time, with a sound for each. Team totals and a live 9-category scoreboard
+   (pinned at the top) update as they land. If the last round decides something (final margin of 2 or less, or a
+   lead change), its stats land more slowly and a "Final round" note shows the score going into it. When the last
+   stat lands, the final result appears: a big banner with the score, the headline and all 9 category cards.
+   - Plays on its own; every landed stat stays on screen. **Skip to result »** jumps to the end.
+   - Sound effects are generated in the browser (Web Audio); toggle them with **Sound on/off**. The setting is
+     remembered.
+   - The games were all chosen before the draft. The roll only plays them back.
+   - Once watched, a refresh goes straight to the results (remembered in this browser). **↺ Replay reveal** plays it
+     again.
+6. **Results** — each player's locked game (date, opponent, minutes, full line; green/red = well above/below their
    season average), team totals per category with the winner highlighted, and the final score, e.g. **5–4**.
    Below the teams, an **Undrafted** table shows every player nobody picked with their chosen game too (best
    season first), so you can see who you missed. They don't count for either team.
+   - **⬇ Download image:** a PNG box score (score, 9 categories, both teams' chosen games).
+   - **Copy as text:** the score, both rosters and each team's best line, for group chats.
 
 The URL tracks the game (`?game=12`), so refreshing mid-draft keeps your place.
 
@@ -118,7 +135,7 @@ All JSON. The draft rules are enforced on the server, so the UI cannot bypass th
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 15, "rosterSize"?: 5, "uniquePlayers"?: false, "showSeasonTeam"?: true, "showGameDate"?: false, "showAverages"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
-| `GET` | `/api/games/:id` | — | Status, settings, current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
+| `GET` | `/api/games/:id` | — | Status, settings, `firstTeam` (the coin-flip winner), current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
 | `POST` | `/api/games/:id/picks` | `{ "playerSeasonId": 1234, "team"?: "A" \| "B" }` | Validates the turn, that the player-season is available and in the pool, and that the draft isn't finished. In `vs_cpu`, `team` defaults to `A` and the CPU's picks are returned in `autoPicks`. |
 | `POST` | `/api/games/:id/reveal` | — | `409` until the last pick. Returns locked lines, team totals, category winners, score, winner, `decidedBy`, and `undrafted` (every pool player nobody picked, with their locked game). Idempotent. |
 
@@ -148,7 +165,7 @@ players ──< player_seasons ──< game_logs           (one row per complete
 | `players` | `id`, `name` (unique; see identity notes below) |
 | `player_seasons` | `id`, `player_id`, `season` ("1986-87"), `team`, `games_played`, per-game `minutes pts reb ast stl blk fg3m fgm fga ftm fta tov`, `value`, `season_rank` · unique `(player_id, season)` |
 | `game_logs` | `id`, `player_season_id`, `game_id`, `game_date`, `team`, `opponent`, `is_home`, `minutes`, the 11 box-score stats · unique `(player_season_id, game_id)` |
-| `games` | `id`, `mode`, `status` (`drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `show_season_team`, `show_game_date`, `show_averages`, `winner`, `score_a`, `score_b`, timestamps |
+| `games` | `id`, `mode`, `status` (`drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `show_season_team`, `show_game_date`, `show_averages`, `first_team` (coin flip), `winner`, `score_a`, `score_b`, timestamps |
 | `game_players` | PK `(game_id, player_season_id)`, `locked_game_log_id` |
 | `draft_picks` | `id`, `game_id`, `team`, `pick_number`, `player_season_id`, `picked_at` · unique `(game_id, pick_number)` and `(game_id, player_season_id)` |
 
@@ -158,8 +175,9 @@ Integrity is enforced in Postgres as well as in the app (`server/prisma/migratio
   `locked_game_log_id`. A second trigger rejects edits to a `game_logs` row once it's locked into any game.
 - **A locked log belongs to its player-season.** Composite FK `(locked_game_log_id, player_season_id) → game_logs(id, player_season_id)`.
 - **Valid settings.** `CHECK`: `roster_size` 1–13, `2 × roster_size ≤ pool_size ≤ 200`.
-- **Snake order lives in the schema.** A `CHECK` ties `team` to `pick_number`; a trigger rejects `pick_number`
-  beyond `2 × roster_size` for that game.
+- **Snake order lives in the schema.** A trigger checks each pick's `team` against `pick_number` and the game's
+  `first_team`, and rejects `pick_number` beyond `2 × roster_size`. Another trigger stops `first_team` changing
+  once picks exist.
 - **Box scores are consistent.** `CHECK`: all stats ≥ 0, `FGA ≥ FGM ≥ 3PM`, `FTA ≥ FTM`.
 - **No double drafting:** unique `(game_id, player_season_id)`, and each pick must come from that game's pool.
 - **Concurrency:** each pick runs in a transaction that holds `SELECT … FOR UPDATE` on the game row, so two
@@ -222,11 +240,13 @@ data. They are unused by v1.1 and kept as a starting point for filling 2023-25.
 
 ---
 
-## Scope (v1.1)
+## Scope (v1.2)
 
 No auth, accounts, online multiplayer, trades or bench.
 
 The UI calls each player-season's secret game its **chosen game**; the code and schema call it the *locked* game.
 
-**Next version:** a more suspenseful locked-game reveal (today it's a basic fade-in).
+**v1.2:** the box-score reveal (pick by pick, stat by stat), sound, and share as image / text.
+**Next:** online multiplayer (rooms, real-time draft, the reveal played in sync on both screens; needs hosting), then
+share links.
 **Later:** draft signposts / category badges, tiered pool sampling, a "Legends" mode, era filters, UI polish.

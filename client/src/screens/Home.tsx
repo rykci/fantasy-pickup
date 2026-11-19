@@ -2,8 +2,8 @@ import { type ChangeEvent, useState } from 'react';
 import { DEFAULT_SETTINGS, LIMITS, api, type GameMode, type GameSettings } from '../api';
 
 const MODES: { value: GameMode; title: string; blurb: string }[] = [
-  { value: 'vs_cpu', title: 'Solo vs CPU', blurb: 'You pick first. The CPU drafts the best available player — mostly.' },
-  { value: 'pass_and_play', title: '2-Player', blurb: 'Pass-and-play on one screen. Player 1 picks first.' },
+  { value: 'vs_cpu', title: 'Solo vs CPU', blurb: 'A coin flip decides who picks first. The CPU drafts the best available player — mostly.' },
+  { value: 'pass_and_play', title: '2-Player', blurb: 'Pass-and-play on one screen. A coin flip decides who picks first.' },
 ];
 
 const VISIBILITY: { key: 'showSeasonTeam' | 'showGameDate' | 'showAverages'; label: string; hint: string }[] = [
@@ -171,7 +171,8 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
             by 9-category value.
           </li>
           <li>
-            <strong>Snake draft.</strong> Order: A B · B A · A B · … until both teams are full.
+            <strong>Coin flip, then a snake draft.</strong> The flip winner picks first: A B · B A · A B · … until both
+            teams are full.
           </li>
           <li>
             <strong>Draft on what you know.</strong> By default you see each player&apos;s name, season and team. You can

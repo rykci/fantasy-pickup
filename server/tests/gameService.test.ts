@@ -12,7 +12,7 @@ let service: GameService;
 beforeEach(() => {
   const { players, logs } = makeUniverse(60);
   repo = new InMemoryGameRepository(players, logs);
-  service = new GameService(repo, seededRng(123));
+  service = new GameService(repo, seededRng(123), () => 'A');
 });
 
 /** Pass-and-play: each turn takes the top of the board. */
@@ -74,7 +74,7 @@ describe('createGame', () => {
   it('uniquePlayers: one season per player', async () => {
     const { players, logs } = makeUniverse(60, { seasonsPerPlayer: 3 }); // 20 players
     const r = new InMemoryGameRepository(players, logs);
-    const svc = new GameService(r, seededRng(5));
+    const svc = new GameService(r, seededRng(5), () => 'A');
     const s = await svc.createGame('vs_cpu', { poolSize: 20, uniquePlayers: true });
     expect(new Set(s.available.map((p) => p.playerId)).size).toBe(20);
     await expect(svc.createGame('vs_cpu', { poolSize: 21, uniquePlayers: true })).rejects.toMatchObject({
@@ -84,7 +84,7 @@ describe('createGame', () => {
   });
 
   it('refuses to start without loaded data', async () => {
-    const empty = new GameService(new InMemoryGameRepository([], []), seededRng());
+    const empty = new GameService(new InMemoryGameRepository([], []), seededRng(), () => 'A');
     await expect(empty.createGame('vs_cpu')).rejects.toMatchObject({ status: 503, code: 'POOL_NOT_SEEDED' });
   });
 });
@@ -116,7 +116,7 @@ describe('draft visibility (ball-knowledge settings)', () => {
   it("doesn't leak the ranking or seasons through the board order", async () => {
     const { players, logs } = makeUniverse(60, { seasonsPerPlayer: 3 }); // same names, different seasons
     for (const p of players) p.name = `Player ${p.playerId}`;
-    const svc = new GameService(new InMemoryGameRepository(players, logs), seededRng(8));
+    const svc = new GameService(new InMemoryGameRepository(players, logs), seededRng(8), () => 'A');
     const s = await svc.createGame('pass_and_play', { poolSize: 40 });
     const names = s.available.map((p) => p.name);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
@@ -271,6 +271,40 @@ describe('pass-and-play draft', () => {
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(await repo.listPicks(s.id)).toHaveLength(1);
+  });
+});
+
+describe('coin flip', () => {
+  const { players, logs } = makeUniverse(60);
+  it('when the CPU wins it, the CPU has already made pick 1 when the game is created', async () => {
+    const svc = new GameService(new InMemoryGameRepository(players, logs), seededRng(3), () => 'B');
+    const s = await svc.createGame('vs_cpu', { showAverages: true });
+    expect(s.firstTeam).toBe('B');
+    expect(s.picks).toEqual([expect.objectContaining({ pickNumber: 1, team: 'B' })]);
+    expect(s.currentTurn).toMatchObject({ pickNumber: 2, team: 'A' });
+    expect(s.draftOrder.map((d) => d.team).join('')).toBe('BAABBAABBA');
+    // You then get two in a row (picks 2 and 3), and the CPU answers with 4 and 5.
+    const r1 = await svc.makePick(s.id, { playerSeasonId: s.available[0].id });
+    expect(r1.autoPicks).toHaveLength(0);
+    const r2 = await svc.makePick(s.id, { playerSeasonId: r1.state.available[0].id });
+    expect(r2.autoPicks.map((p) => p.pickNumber)).toEqual([4, 5]);
+  });
+
+  it('pass-and-play: Player 2 can win it', async () => {
+    const svc = new GameService(new InMemoryGameRepository(players, logs), seededRng(3), () => 'B');
+    const s = await svc.createGame('pass_and_play');
+    expect(s.picks).toHaveLength(0);
+    expect(s.currentTurn).toMatchObject({ pickNumber: 1, team: 'B', label: 'Player 2' });
+    await expect(svc.makePick(s.id, { playerSeasonId: s.available[0].id, team: 'A' })).rejects.toMatchObject({
+      code: 'NOT_YOUR_TURN',
+    });
+  });
+
+  it('is a fair coin by default', async () => {
+    const svc = new GameService(new InMemoryGameRepository(players, logs), seededRng(11));
+    const firsts = new Set<string>();
+    for (let i = 0; i < 20; i++) firsts.add((await svc.createGame('pass_and_play')).firstTeam);
+    expect(firsts).toEqual(new Set(['A', 'B']));
   });
 });
 

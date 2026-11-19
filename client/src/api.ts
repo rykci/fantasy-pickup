@@ -91,6 +91,8 @@ export interface GameState {
   totalPicks: number;
   teamLabels: Record<Team, string>;
   cpuTeams: Team[];
+  /** Coin-flip winner: picks first. */
+  firstTeam: Team;
   currentTurn: { pickNumber: number; round: number; team: Team; label: string } | null;
   draftOrder: { pickNumber: number; round: number; team: Team; playerSeasonId: number | null }[];
   rosters: Record<Team, PlayerView[]>;
@@ -160,6 +162,8 @@ export interface RevealResult {
   /** Pool players nobody drafted, with their chosen game. Best season value first. */
   undrafted: (FullPlayerView & { lockedGame: LockedGame })[];
 }
+
+export type RevealedPlayer = RevealResult['teams']['A']['players'][number];
 
 /** "Dec 25, 1996" */
 export function formatDate(iso: string): string {

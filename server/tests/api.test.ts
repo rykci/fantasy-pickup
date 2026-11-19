@@ -9,7 +9,7 @@ let app: ReturnType<typeof createApp>;
 
 beforeEach(() => {
   const { players, logs } = makeUniverse(60);
-  app = createApp(new GameService(new InMemoryGameRepository(players, logs), seededRng(1)));
+  app = createApp(new GameService(new InMemoryGameRepository(players, logs), seededRng(1), () => 'A'));
 });
 
 describe('REST API', () => {

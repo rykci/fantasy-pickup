@@ -48,12 +48,13 @@ export class PrismaGameRepository implements GameRepository {
     return [...byPs].map(([playerSeasonId, gameLogIds]) => ({ playerSeasonId, gameLogIds }));
   }
 
-  async createGame(mode: GameMode, settings: GameSettings, locks: LockRecord[]): Promise<GameRecord> {
+  async createGame(mode: GameMode, settings: GameSettings, firstTeam: Team, locks: LockRecord[]): Promise<GameRecord> {
     // Nested create => the game and its locks are inserted in a single transaction.
     return this.db.game.create({
       data: {
         mode,
         ...settings,
+        firstTeam,
         players: {
           createMany: {
             data: locks.map((l) => ({ playerSeasonId: l.playerSeasonId, lockedGameLogId: l.lockedGameLogId })),
