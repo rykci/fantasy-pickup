@@ -214,7 +214,8 @@ official numbers).
     "Eddie Johnson (ATL)". Rows that still collide (two Charles Joneses on WAS, 1988-89) are dropped.
   - Fathers and sons with the same name across eras (Gerald Henderson, Mike Dunleavy, Patrick Ewing) count as one
     person. This only matters for the "one season per player" setting.
-- A traded player's `team` is the team of their last game that season. The locked game shows the actual team.
+- A traded player's team in a game is the team they played for in their chosen game. (`player_seasons.team` stores
+  the team of their last game that season, but the app doesn't show it.)
 
 `ingestion/tools/build_seed_from_espn.py`, `ingestion/players.csv` and `ingestion/seed/` are the v1 (2024-25, ESPN)
 data. They are unused by v1.1 and kept as a starting point for filling 2023-25.

@@ -68,18 +68,18 @@ export class PrismaGameRepository implements GameRepository {
   }
 
   async listPool(gameId: number): Promise<PoolPlayer[]> {
-    // Deliberately selects only the player-season: never the locked game log.
+    // From the locked game log, only its team (right for traded players): never its stats.
     const rows = await this.db.gamePlayer.findMany({
       where: { gameId },
-      select: { playerSeason: { include: { player: true } } },
+      select: { playerSeason: { include: { player: true } }, lockedGameLog: { select: { team: true } } },
       orderBy: { playerSeasonId: 'asc' },
     });
-    return rows.map(({ playerSeason: ps }) => ({
+    return rows.map(({ playerSeason: ps, lockedGameLog }) => ({
       id: ps.id,
       playerId: ps.playerId,
       name: ps.player.name,
       season: ps.season,
-      team: ps.team,
+      team: lockedGameLog.team,
       averages: { gamesPlayed: ps.gamesPlayed, minutes: ps.minutes, ...statLine(ps) },
     }));
   }

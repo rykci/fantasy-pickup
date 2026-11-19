@@ -65,8 +65,14 @@ export class InMemoryGameRepository implements GameRepository {
   }
 
   async listPool(gameId: number): Promise<PoolPlayer[]> {
-    const ids = new Set((this.locks.get(gameId) ?? []).map((l) => l.playerSeasonId));
-    return this.players.filter((p) => ids.has(p.id));
+    // Like Postgres: the team comes from the locked game (right for traded players).
+    const teams = new Map(
+      (this.locks.get(gameId) ?? []).map((l) => [
+        l.playerSeasonId,
+        this.logs.find((g) => g.gameLogId === l.lockedGameLogId)!.team,
+      ]),
+    );
+    return this.players.filter((p) => teams.has(p.id)).map((p) => ({ ...p, team: teams.get(p.id)! }));
   }
 
   async listPicks(gameId: number): Promise<PickRecord[]> {
