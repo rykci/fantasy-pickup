@@ -43,7 +43,7 @@ describe('database invariants', () => {
   });
 
   it("a player's team is the team of their locked game (right for traded players)", async () => {
-    const { id, available } = await newGame('pass_and_play', { poolSize: 200 });
+    const { id, available } = await newGame('pass_and_play', { poolSize: 200, showSeasonTeam: true });
     const rows = await prisma.gamePlayer.findMany({ where: { gameId: id }, include: { lockedGameLog: true } });
     const byPs = new Map(rows.map((r) => [r.playerSeasonId, r.lockedGameLog.team]));
     for (const p of available) expect(p.team).toBe(byPs.get(p.id));

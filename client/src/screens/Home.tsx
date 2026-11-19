@@ -175,8 +175,8 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
             teams are full.
           </li>
           <li>
-            <strong>Draft on what you know.</strong> By default you see each player&apos;s name, season and team. You can
-            hide those too, or show the date of their chosen game or their season averages.
+            <strong>Draft on what you know.</strong> By default you see only each player&apos;s name, and each player
+            appears once. You can show their season and team, the date of their chosen game, or their season averages.
           </li>
           <li>
             <strong>One chosen game decides it.</strong> When the game is created, each player-season gets one random

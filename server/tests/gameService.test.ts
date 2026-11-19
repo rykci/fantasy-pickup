@@ -30,8 +30,8 @@ describe('createGame', () => {
     expect(state.settings).toEqual({
       poolSize: 15,
       rosterSize: 5,
-      uniquePlayers: false,
-      showSeasonTeam: true,
+      uniquePlayers: true,
+      showSeasonTeam: false,
       showGameDate: false,
       showAverages: false,
     });
@@ -92,12 +92,13 @@ describe('createGame', () => {
 describe('draft visibility (ball-knowledge settings)', () => {
   const hiddenKeys = /"pts"|"reb"|"fgPct"|"gamesPlayed"|"minutes"/;
 
-  it('defaults: name, season and team only; no averages, VAL or locked-game clue', async () => {
+  it('defaults: names only, one season per player; no season, team, averages, VAL or clue', async () => {
     const s = await service.createGame('pass_and_play');
-    expect(s.settings).toMatchObject({ showSeasonTeam: true, showGameDate: false, showAverages: false });
+    expect(s.settings).toMatchObject({ uniquePlayers: true, showSeasonTeam: false, showGameDate: false, showAverages: false });
+    expect(new Set(s.available.map((p) => p.playerId)).size).toBe(s.available.length);
     for (const p of s.available) {
-      expect(p.season).toMatch(/^\d{4}-\d{2}$/);
-      expect(p.team).toBeTruthy();
+      expect(p.season).toBeNull();
+      expect(p.team).toBeNull();
       expect(p.averages).toBeNull();
       expect(p.value).toBeNull();
       expect(p.gameClue).toBeNull();
@@ -105,19 +106,26 @@ describe('draft visibility (ball-knowledge settings)', () => {
     expect(JSON.stringify(s)).not.toMatch(hiddenKeys);
   });
 
-  it('can hide season and team too: just names, also in picks', async () => {
-    const s = await service.createGame('pass_and_play', { showSeasonTeam: false });
-    expect(s.available.every((p) => p.season === null && p.team === null)).toBe(true);
+  it('hidden season and team stay hidden in picks and rosters', async () => {
+    const s = await service.createGame('pass_and_play');
     const r = await service.makePick(s.id, { playerSeasonId: s.available[0].id, team: 'A' });
     expect(r.state.picks[0].season).toBeNull();
     expect(r.state.rosters.A[0]).toMatchObject({ season: null, team: null });
+  });
+
+  it('can show season and team', async () => {
+    const s = await service.createGame('pass_and_play', { showSeasonTeam: true });
+    for (const p of s.available) {
+      expect(p.season).toMatch(/^\d{4}-\d{2}$/);
+      expect(p.team).toBeTruthy();
+    }
   });
 
   it("doesn't leak the ranking or seasons through the board order", async () => {
     const { players, logs } = makeUniverse(60, { seasonsPerPlayer: 3 }); // same names, different seasons
     for (const p of players) p.name = `Player ${p.playerId}`;
     const svc = new GameService(new InMemoryGameRepository(players, logs), seededRng(8), () => 'A');
-    const s = await svc.createGame('pass_and_play', { poolSize: 40 });
+    const s = await svc.createGame('pass_and_play', { poolSize: 40, uniquePlayers: false });
     const names = s.available.map((p) => p.name);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
     // Within a name, entries aren't simply in id (= season/rank) order every time.

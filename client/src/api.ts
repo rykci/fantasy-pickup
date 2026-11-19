@@ -19,8 +19,8 @@ export interface GameSettings {
 export const DEFAULT_SETTINGS: GameSettings = {
   poolSize: 15,
   rosterSize: 5,
-  uniquePlayers: false,
-  showSeasonTeam: true,
+  uniquePlayers: true,
+  showSeasonTeam: false,
   showGameDate: false,
   showAverages: false,
 };

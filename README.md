@@ -61,9 +61,9 @@ npm run test:db    # 13 integration tests against the docker Postgres (needs mig
    |---|---|---|
    | Team size (= rounds) | 5 | 1–13 |
    | Pool size | 15 | 2 × team size – 200 |
-   | One season per player | off | off: the pool may hold 1988 Jordan *and* 1996 Jordan |
+   | One season per player | on | off: the pool may hold 1988 Jordan *and* 1996 Jordan |
    | **What you see while drafting** | | anything off is hidden until the reveal |
-   | ↳ Season & team | on | off: just the player's name |
+   | ↳ Season & team | off | off: just the player's name |
    | ↳ Chosen game date & opponent | off | on: a clue such as "Dec 25, 1996 vs BOS" (that game's stats stay secret) |
    | ↳ Season averages | off | on: all 9 categories plus VAL |
 
@@ -75,7 +75,7 @@ npm run test:db    # 13 integration tests against the docker Postgres (needs mig
 3. **Draft** — the banner shows whose turn it is, the round and pick number. The strip under it shows the full
    snake order, starting with the flip winner: `A B · B A · A B · …` or `B A · A B · B A · …`.
    - Sort any column, search by name, team or season (e.g. `1996`).
-   - **Ball knowledge:** the board shows only what the settings allow (default: name, season, team). Hidden
+   - **Ball knowledge:** the board shows only what the settings allow (default: just the name). Hidden
      fields aren't sent by the server at all until the reveal, so they can't be found in dev tools. Without
      averages the board is alphabetical, and same-name entries are in a per-game shuffled order, so the order
      doesn't give away the ranking or the season. The CPU always drafts by VAL.
@@ -134,7 +134,7 @@ All JSON. The draft rules are enforced on the server, so the UI cannot bypass th
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 15, "rosterSize"?: 5, "uniquePlayers"?: false, "showSeasonTeam"?: true, "showGameDate"?: false, "showAverages"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
+| `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 15, "rosterSize"?: 5, "uniquePlayers"?: true, "showSeasonTeam"?: false, "showGameDate"?: false, "showAverages"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
 | `GET` | `/api/games/:id` | — | Status, settings, `firstTeam` (the coin-flip winner), current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
 | `POST` | `/api/games/:id/picks` | `{ "playerSeasonId": 1234, "team"?: "A" \| "B" }` | Validates the turn, that the player-season is available and in the pool, and that the draft isn't finished. In `vs_cpu`, `team` defaults to `A` and the CPU's picks are returned in `autoPicks`. |
 | `POST` | `/api/games/:id/reveal` | — | `409` until the last pick. Returns locked lines, team totals, category winners, score, winner, `decidedBy`, and `undrafted` (every pool player nobody picked, with their locked game). Idempotent. |
