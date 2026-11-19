@@ -95,6 +95,43 @@ export const sound = {
     tone(c, 190, { dur: 0.1, gain: 0.14, type: 'triangle', endFreq: 80 });
     tone(c, 1400, { dur: 0.03, gain: 0.025, type: 'square' });
   },
+  // ---- draft
+
+  /** Online: it just became your turn. A bright two-note chime. */
+  yourTurn() {
+    const c = audio();
+    if (!c) return;
+    tone(c, 660, { dur: 0.18, gain: 0.08, type: 'triangle' });
+    tone(c, 990, { delay: 0.12, dur: 0.3, gain: 0.08, type: 'triangle' });
+    tone(c, 1980, { delay: 0.12, dur: 0.25, gain: 0.015, type: 'sine' });
+  },
+  /** Your pick lands in your roster: a card slapped down. */
+  pickMine() {
+    const c = audio();
+    if (!c) return;
+    tone(c, 150, { dur: 0.16, gain: 0.26, type: 'sine', endFreq: 65 });
+    tone(c, 950, { dur: 0.04, gain: 0.05, type: 'square' });
+  },
+  /** The other side's pick: lighter, so you can tell them apart without looking. */
+  pickTheirs() {
+    const c = audio();
+    if (!c) return;
+    tone(c, 240, { dur: 0.12, gain: 0.14, type: 'triangle', endFreq: 120 });
+    tone(c, 1300, { dur: 0.03, gain: 0.02, type: 'square' });
+  },
+  /** Last seconds of your pick clock; higher as it gets closer. */
+  clockTick(secondsLeft: number) {
+    const c = audio();
+    if (c) tone(c, 900 + (5 - secondsLeft) * 140, { dur: 0.05, gain: 0.035, type: 'square' });
+  },
+  /** Draft complete: rosters locked. */
+  rostersLocked() {
+    const c = audio();
+    if (!c) return;
+    tone(c, 110, { dur: 0.3, gain: 0.3, type: 'sine', endFreq: 60 });
+    [330, 415, 494].forEach((f) => tone(c, f, { delay: 0.05, dur: 0.7, gain: 0.05, type: 'triangle' }));
+  },
+
   /** End of the reveal. */
   swell(outcome: Outcome) {
     const c = audio();

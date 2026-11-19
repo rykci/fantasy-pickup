@@ -58,6 +58,8 @@ interface Props {
   pickLabel: string;
   busy: boolean;
   onPick: (player: PlayerView) => void;
+  /** The player being drafted right now: their row fades out while the pick is sent. */
+  pendingId?: number | null;
 }
 
 function StatCells({ a, value }: { a: Averages; value: number | null }) {
@@ -91,7 +93,7 @@ function hiddenNote(show: Visibility): string | null {
   return hidden.length ? `${hidden.join(', ')} hidden until the reveal` : null;
 }
 
-export default function PlayerTable({ players, show, canPick, pickLabel, busy, onPick }: Props) {
+export default function PlayerTable({ players, show, canPick, pickLabel, busy, onPick, pendingId }: Props) {
   const columns = [
     NAME_COLUMN,
     ...(show.showSeasonTeam ? SEASON_TEAM_COLUMNS : []),
@@ -164,7 +166,7 @@ export default function PlayerTable({ players, show, canPick, pickLabel, busy, o
           </thead>
           <tbody>
             {rows.map((p) => (
-              <tr key={p.id}>
+              <tr key={p.id} className={p.id === pendingId ? 'leaving' : undefined}>
                 <td className="name">
                   {p.name}
                   {p.averages && (

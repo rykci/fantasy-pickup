@@ -958,9 +958,30 @@ tfoot td {
   box-shadow: inset 3px 0 0 var(--team-b);
 }
 .game-rolling {
+  display: block;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   filter: blur(0.4px);
+}
+.game-rolling > span {
+  display: block;
+}
+/* Fixed layout: column widths come from the <colgroup>, never from what's in the cells,
+   so nothing moves while games roll and stats land. Narrow screens scroll sideways. */
+.line-table {
+  table-layout: fixed;
+  min-width: 900px;
+}
+.line-table td.name,
+.line-table td.game-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.line-table td.name .gp,
+.line-table td.game-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .game-landed {
   display: block;
@@ -1387,5 +1408,68 @@ td.stat-in {
   }
   .room-code {
     font-size: 2.4rem;
+  }
+}
+
+/* ---------------------------------------------------------- draft feedback */
+
+.mute-btn {
+  margin-left: auto;
+  padding: 4px 8px;
+}
+.mute-btn + .pick-clock {
+  margin-left: 0;
+}
+.player-table tr.leaving {
+  opacity: 0.25;
+  transition: opacity 0.25s;
+}
+.roster-slots li.just-picked {
+  animation: drop-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2), flash-A 1.6s ease-out;
+}
+.roster.team-B .roster-slots li.just-picked {
+  animation: drop-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2), flash-B 1.6s ease-out;
+}
+.turn-banner.complete {
+  animation: locked 0.5s ease-out;
+}
+@keyframes drop-in {
+  from {
+    transform: translateY(-14px) scale(1.04);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes flash-A {
+  0%,
+  30% {
+    background: var(--team-a-soft);
+    box-shadow: inset 3px 0 0 var(--team-a);
+  }
+}
+@keyframes flash-B {
+  0%,
+  30% {
+    background: var(--team-b-soft);
+    box-shadow: inset 3px 0 0 var(--team-b);
+  }
+}
+@keyframes locked {
+  0% {
+    transform: scale(1.03);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  100% {
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .roster-slots li.just-picked,
+  .roster.team-B .roster-slots li.just-picked,
+  .turn-banner.complete {
+    animation: none;
   }
 }

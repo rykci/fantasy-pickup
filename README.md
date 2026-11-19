@@ -88,6 +88,10 @@ npm run test:db    # 14 integration tests against the docker Postgres (needs mig
    - **vs CPU:** you are Team A. If the CPU wins the flip, it has already made pick 1 when the draft opens. It picks
      as soon as it's on the clock, twice in a row when the snake order gives it two picks.
    - **2-Player:** after each pick the banner tells you to pass the device.
+   - **Sound and motion:** each pick drops into its roster slot with a flash and a sound (a heavier one for your
+     side, a lighter one for the other), the CPU's double picks land one after another, and the end of the draft
+     plays a "rosters locked" sound. Online, a chime and a "🏀 Your pick!" tab title tell you it's your turn, and the
+     last 5 seconds of your pick clock tick. 🔊 in the banner mutes everything (shared with the reveal).
 4. After the last pick, click **Reveal the games →**.
 5. **The reveal** happens on the results page itself. Both box scores start blank, and it goes round by round: each
    team's 1st pick rolls together, then each team's 2nd pick, and so on, so the scoreboard stays balanced. Both

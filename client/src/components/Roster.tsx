@@ -7,7 +7,7 @@ function rosterMeta(p: PlayerView): string {
     p.gameClue ? `${formatDate(p.gameClue.gameDate)} ${p.gameClue.isHome ? 'vs' : '@'} ${p.gameClue.opponent}` : null,
     p.value !== null ? `VAL ${p.value.toFixed(1)}` : null,
   ].filter(Boolean);
-  return parts.length ? parts.join(' · ') : 'Hidden until the reveal';
+  return parts.join(' · ');
 }
 
 interface Props {
@@ -17,9 +17,11 @@ interface Props {
   slots: number;
   onClock: boolean;
   isCpu: boolean;
+  /** Player-seasons that just landed here: they drop in and flash. */
+  fresh?: ReadonlySet<number>;
 }
 
-export default function Roster({ team, label, players, slots, onClock, isCpu }: Props) {
+export default function Roster({ team, label, players, slots, onClock, isCpu, fresh }: Props) {
   const hidden = players.some((p) => p.value === null);
   const total = players.reduce((sum, p) => sum + (p.value ?? 0), 0);
   return (
@@ -36,11 +38,11 @@ export default function Roster({ team, label, players, slots, onClock, isCpu }: 
         {Array.from({ length: slots }, (_, i) => {
           const p = players[i];
           return (
-            <li key={i} className={p ? 'filled' : 'empty-slot'}>
+            <li key={i} className={p ? `filled ${fresh?.has(p.id) ? 'just-picked' : ''}` : 'empty-slot'}>
               {p ? (
                 <>
                   <span className="slot-name">{p.name}</span>
-                  <span className="slot-meta">{rosterMeta(p)}</span>
+                  {rosterMeta(p) && <span className="slot-meta">{rosterMeta(p)}</span>}
                 </>
               ) : (
                 <span className="slot-name muted">Player {i + 1}</span>

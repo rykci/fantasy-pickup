@@ -4,6 +4,7 @@ import CoinFlip from '../components/CoinFlip';
 import DraftOrder from '../components/DraftOrder';
 import PlayerTable from '../components/PlayerTable';
 import Roster from '../components/Roster';
+import { sound, useMuted } from '../lib/sound';
 
 /** "1986-87 Michael Jordan", or just the name when seasons are hidden. */
 function withSeason(season: string | null, name: string): string {
@@ -27,6 +28,12 @@ function clockText(ms: number): string {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+const PAGE_TITLE = 'Fantasy Pickup Basketball'; // matches index.html
+/** Between two picks landing together (e.g. the CPU's snake double pick). */
+const PICK_STAGGER_MS = 350;
+/** How long a new roster entry stays highlighted. */
+const FRESH_MS = 1600;
 
 /** Ticks while `on`, so countdowns re-render. */
 function useNow(on: boolean, every = 250): number {
@@ -118,6 +125,62 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
   const deadline = state?.online?.turnDeadline ? localTime(state.online.turnDeadline) : null;
   const now = useNow(online && state?.status === 'drafting');
 
+  const [fresh, setFresh] = useState<ReadonlySet<number>>(new Set());
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const [muted, setMuted] = useMuted();
+
+  // New picks (yours, the CPU's, your friend's, or the clock's): a sound each, and they drop into the roster.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const seenPicks = useRef<number | null>(null);
+  const pickCount = state?.picks.length;
+  useEffect(() => {
+    const s = stateRef.current;
+    if (!s || pickCount === undefined) return;
+    const before = seenPicks.current;
+    seenPicks.current = pickCount;
+    if (before === null || pickCount <= before) return; // first load: no fanfare for old picks
+    const added = s.picks.slice(before);
+    const timers = added.map((p, i) =>
+      window.setTimeout(() => {
+        // Lands on your team (online: including picks the clock made for you).
+        const mine =
+          s.mode === 'pass_and_play' || (s.mode === 'vs_cpu' ? !s.cpuTeams.includes(p.team) : p.team === s.online?.you);
+        if (mine) sound.pickMine();
+        else sound.pickTheirs();
+      }, i * PICK_STAGGER_MS),
+    );
+    if (s.status !== 'drafting') {
+      timers.push(window.setTimeout(() => sound.rostersLocked(), added.length * PICK_STAGGER_MS + 200));
+    }
+    setFresh(new Set(added.map((p) => p.playerSeasonId)));
+    // Scheduled sounds keep playing even if we navigate away (online goes straight to the reveal).
+  }, [pickCount]);
+
+  useEffect(() => {
+    if (fresh.size === 0) return;
+    const id = window.setTimeout(() => setFresh(new Set()), FRESH_MS);
+    return () => window.clearTimeout(id);
+  }, [fresh]);
+
+  // Online: chime when it becomes your turn, and say so in the tab title.
+  const turnNow = state?.currentTurn ?? null;
+  const flipPending = online && turnOpensAt !== null && now < turnOpensAt;
+  const myTurnOpen = !!(online && state?.status === 'drafting' && turnNow && turnNow.team === you && !flipPending);
+  const wasMyTurn = useRef(false);
+  useEffect(() => {
+    if (myTurnOpen && !wasMyTurn.current) sound.yourTurn();
+    wasMyTurn.current = myTurnOpen;
+    document.title = myTurnOpen ? '🏀 Your pick! · Fantasy Pickup' : PAGE_TITLE;
+  }, [myTurnOpen]);
+  useEffect(() => () => void (document.title = PAGE_TITLE), []);
+
+  // Online: a quiet tick for the last 5 seconds of your pick clock.
+  const secondsLeft = deadline !== null ? Math.ceil((deadline - now) / 1000) : null;
+  useEffect(() => {
+    if (myTurnOpen && secondsLeft !== null && secondsLeft >= 1 && secondsLeft <= 5) sound.clockTick(secondsLeft);
+  }, [myTurnOpen, secondsLeft]);
+
   function finishFlip(s: GameState) {
     try {
       localStorage.setItem(flipKey(gameId), '1');
@@ -138,6 +201,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
     const picker = state.teamLabels[state.currentTurn.team];
     setBusy(true);
     setError(null);
+    setPendingId(player.id);
     myPicks.current.add(state.currentTurn.pickNumber);
     try {
       const res = await api.pick(gameId, player.id, state.currentTurn.team);
@@ -159,6 +223,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
       await load(); // resync with the server's view of the draft
     } finally {
       setBusy(false);
+      setPendingId(null);
     }
   }
 
@@ -220,6 +285,14 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
               </div>
               <div className="turn-title">{title}</div>
             </div>
+            <button
+              className="btn btn-small mute-btn"
+              onClick={() => setMuted(!muted)}
+              aria-pressed={muted}
+              title={muted ? 'Sound off' : 'Sound on'}
+            >
+              {muted ? '🔇' : '🔊'}
+            </button>
             {deadline !== null && !waitingForFlip && (
               <div className={`pick-clock ${deadline - now < 10_000 ? 'urgent' : ''}`} aria-label="Time left for this pick">
                 {clockText(deadline - now)}
@@ -262,6 +335,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
           slots={state.settings.rosterSize}
           onClock={turn?.team === 'A'}
           isCpu={state.cpuTeams.includes('A')}
+          fresh={fresh}
         />
         {!complete ? (
           <PlayerTable
@@ -271,6 +345,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
             pickLabel={pickLabel}
             busy={busy}
             onPick={pick}
+            pendingId={pendingId}
           />
         ) : (
           <div className="panel center pool-done">
@@ -289,6 +364,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
           slots={state.settings.rosterSize}
           onClock={turn?.team === 'B'}
           isCpu={state.cpuTeams.includes('B')}
+          fresh={fresh}
         />
       </div>
     </div>

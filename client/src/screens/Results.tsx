@@ -148,13 +148,13 @@ function catText(c: CategoryResult, side: Team): string {
 }
 
 /** A believable date and opponent to flash while a chosen game rolls. */
-function rollingGame(p: RevealedPlayer, opponents: string[]): string {
+function rollingGame(p: RevealedPlayer, opponents: string[]): { date: string; matchup: string } {
   const y = Number(p.season.slice(0, 4));
   const start = Date.UTC(y, 10, 1);
   const end = Date.UTC(y + 1, 3, 15);
   const d = new Date(start + Math.random() * (end - start)).toISOString().slice(0, 10);
   const opp = opponents[Math.floor(Math.random() * opponents.length)];
-  return `${formatDate(d)} ${Math.random() < 0.5 ? 'vs' : '@'} ${opp}`;
+  return { date: formatDate(d), matchup: `${Math.random() < 0.5 ? 'vs' : '@'} ${opp}` };
 }
 
 // ------------------------------------------------------------------ pieces
@@ -189,7 +189,7 @@ function PlayerRow({
   p: FullPlayerView & { pickNumber?: number };
   g: LockedGame;
   state: RowState;
-  rollText?: string;
+  rollText?: { date: string; matchup: string };
   rowRef?: (el: HTMLTableRowElement | null) => void;
 }) {
   const { rolling, landed, shown } = state;
@@ -210,10 +210,17 @@ function PlayerRow({
               {g.team} {g.isHome ? 'vs' : '@'} {g.opponent} · {g.minutes} min
             </span>
           </span>
-        ) : rolling ? (
-          <span className="game-rolling">{rollText}</span>
+        ) : rolling && rollText ? (
+          // Same two-line shape as a landed game, so nothing shifts while it rolls.
+          <span className="game-rolling">
+            <span>{rollText.date}</span>
+            <span className="small">{rollText.matchup}</span>
+          </span>
         ) : (
-          <span className="muted">Not rolled yet</span>
+          <span className="game-landed">
+            <span className="muted">Not rolled yet</span>
+            <span className="small">{'\u00a0'}</span>
+          </span>
         )}
       </td>
       {COUNTING_COLS.map((s, j) =>
@@ -244,9 +251,18 @@ function PlayerRow({
   );
 }
 
+/** Fixed column widths: the box score keeps its shape while games roll and stats land. */
+const COL_WIDTHS = [200, 190, ...COUNTING_COLS.map(() => 56), 66, 66, 48];
+
 function LineTableHead() {
   return (
-    <thead>
+    <>
+      <colgroup>
+        {COL_WIDTHS.map((w, i) => (
+          <col key={i} style={{ width: w }} />
+        ))}
+      </colgroup>
+      <thead>
       <tr>
         <th>Player</th>
         <th>Chosen game</th>
@@ -259,7 +275,8 @@ function LineTableHead() {
         <th className="num">FT</th>
         <th className="num">TO</th>
       </tr>
-    </thead>
+      </thead>
+    </>
   );
 }
 
