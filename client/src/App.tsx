@@ -3,11 +3,16 @@ import Draft from './screens/Draft';
 import Home from './screens/Home';
 import Results from './screens/Results';
 
-type Screen = { name: 'home' } | { name: 'draft'; gameId: number } | { name: 'results'; gameId: number };
+type Screen =
+  | { name: 'home'; invite?: string }
+  | { name: 'draft'; gameId: number }
+  | { name: 'results'; gameId: number };
 
 /** Screen is mirrored in the URL (?game=12 / ?game=12&view=results) so a refresh keeps your game. */
 function readUrl(): Screen {
   const params = new URLSearchParams(window.location.search);
+  const invite = params.get('join');
+  if (invite) return { name: 'home', invite: invite.toUpperCase() };
   const id = Number(params.get('game'));
   if (!Number.isInteger(id) || id <= 0) return { name: 'home' };
   return params.get('view') === 'results' ? { name: 'results', gameId: id } : { name: 'draft', gameId: id };
@@ -45,7 +50,9 @@ export default function App() {
         <span className="topbar-sub">1983–2023 one-game draft</span>
       </header>
       <main>
-        {screen.name === 'home' && <Home onStart={(gameId) => go({ name: 'draft', gameId })} />}
+        {screen.name === 'home' && (
+          <Home key={screen.invite ?? 'home'} invite={screen.invite} onStart={(gameId) => go({ name: 'draft', gameId })} />
+        )}
         {screen.name === 'draft' && (
           <Draft
             key={screen.gameId}
@@ -55,7 +62,12 @@ export default function App() {
           />
         )}
         {screen.name === 'results' && (
-          <Results key={screen.gameId} gameId={screen.gameId} onPlayAgain={() => go({ name: 'home' })} />
+          <Results
+            key={screen.gameId}
+            gameId={screen.gameId}
+            onPlayAgain={() => go({ name: 'home' })}
+            onRematch={(gameId) => go({ name: 'draft', gameId })}
+          />
         )}
       </main>
     </div>

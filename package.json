@@ -1,0 +1,6 @@
+{
+  "name": "fantasy-pickup",
+  "private": true,
+  "type": "module",
+  "description": "Deploy root for Vercel. The app lives in client/ and server/, each with its own package.json."
+}

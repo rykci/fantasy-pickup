@@ -6,15 +6,27 @@ import { HttpError } from './errors.js';
 import type { GameService } from './services/gameService.js';
 
 // Settings are optional (server defaults apply); range rules live in validateSettings.
-const createGameBody = z.object({
-  mode: z.enum(['vs_cpu', 'pass_and_play']),
+const settingsFields = {
   poolSize: z.number().int().optional(),
   rosterSize: z.number().int().optional(),
   uniquePlayers: z.boolean().optional(),
   showSeasonTeam: z.boolean().optional(),
   showGameDate: z.boolean().optional(),
   showAverages: z.boolean().optional(),
+};
+const createGameBody = z.object({ mode: z.enum(['vs_cpu', 'pass_and_play']), ...settingsFields });
+const playerName = z.string().trim().min(1).max(20);
+const createOnlineBody = z.object({
+  name: playerName,
+  /** Pick clock in seconds, or null for none. */
+  pickSeconds: z.number().int().nullable().optional(),
+  ...settingsFields,
 });
+const joinBody = z.object({ code: z.string().trim().min(1).max(10), name: playerName });
+
+/** Online players prove their seat with the token they got when creating or joining. */
+const PLAYER_TOKEN_HEADER = 'x-player-token';
+const tokenOf = (req: Request) => req.get(PLAYER_TOKEN_HEADER) || undefined;
 const pickBody = z.object({
   playerSeasonId: z.number().int().positive(),
   team: z.enum(['A', 'B']).optional(),
@@ -67,10 +79,34 @@ export function createApp(service: GameService) {
     }),
   );
 
+  app.post(
+    '/api/online/games',
+    route(async (req, res) => {
+      const { name, pickSeconds, ...settings } = parseBody(createOnlineBody, req.body);
+      res.status(201).json(await service.createOnlineGame(name, settings, pickSeconds ?? null));
+    }),
+  );
+
+  app.post(
+    '/api/online/join',
+    route(async (req, res) => {
+      const { code, name } = parseBody(joinBody, req.body);
+      res.status(201).json(await service.joinGame(code, name));
+    }),
+  );
+
   app.get(
     '/api/games/:id',
     route(async (req, res) => {
-      res.json(await service.getState(parseGameId(req)));
+      res.set('Cache-Control', 'no-store');
+      res.json(await service.getState(parseGameId(req), tokenOf(req)));
+    }),
+  );
+
+  app.post(
+    '/api/games/:id/start',
+    route(async (req, res) => {
+      res.json(await service.startGame(parseGameId(req), tokenOf(req)));
     }),
   );
 
@@ -79,7 +115,14 @@ export function createApp(service: GameService) {
     route(async (req, res) => {
       const id = parseGameId(req);
       const body = parseBody(pickBody, req.body);
-      res.status(201).json(await service.makePick(id, body));
+      res.status(201).json(await service.makePick(id, body, tokenOf(req)));
+    }),
+  );
+
+  app.post(
+    '/api/games/:id/rematch',
+    route(async (req, res) => {
+      res.status(201).json(await service.rematch(parseGameId(req), tokenOf(req)));
     }),
   );
 

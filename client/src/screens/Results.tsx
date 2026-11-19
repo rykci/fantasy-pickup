@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  adoptRematch,
   api,
   formatDate,
+  localTime,
+  type GameState,
   formatPct,
   type CategoryResult,
   type FullPlayerView,
@@ -93,7 +96,17 @@ function buildTimeline(r: RevealResult) {
   });
   steps.push({ kind: 'end', ms: MS.end });
   const finalRoundStart = clutch ? at.get(byRound.at(-1)![0])!.roll : Infinity;
-  return { steps, at, rounds: byRound.length, end: steps.length - 1, before, finalRoundStart };
+  // When each step starts, from the start of the reveal: both online screens follow this schedule.
+  const starts: number[] = [];
+  steps.reduce((t, st) => (starts.push(t), t + st.ms), 0);
+  return { steps, starts, at, rounds: byRound.length, end: steps.length - 1, before, finalRoundStart };
+}
+
+/** The step playing `elapsed` ms into the reveal. */
+function stepAt(starts: number[], elapsed: number): number {
+  let i = 0;
+  while (i + 1 < starts.length && starts[i + 1] <= elapsed) i++;
+  return i;
 }
 
 // ------------------------------------------------------------------ helpers
@@ -114,8 +127,9 @@ function markSeen(id: number) {
   }
 }
 
-function outcomeFor(r: RevealResult): Outcome {
+function outcomeFor(r: RevealResult, you: Team | null): Outcome {
   if (r.winner === 'draw') return 'draw';
+  if (r.mode === 'online') return you && r.winner !== you ? 'lose' : 'win';
   return r.mode === 'vs_cpu' && r.winner === 'B' ? 'lose' : 'win';
 }
 
@@ -304,12 +318,25 @@ function FinalCategories({ r }: { r: RevealResult }) {
 
 // ------------------------------------------------------------------ screen
 
-export default function Results({ gameId, onPlayAgain }: { gameId: number; onPlayAgain: () => void }) {
+interface ResultsProps {
+  gameId: number;
+  onPlayAgain: () => void;
+  onRematch: (gameId: number) => void;
+}
+
+export default function Results({ gameId, onPlayAgain, onRematch }: ResultsProps) {
   const [result, setResult] = useState<RevealResult | null>(null);
+  const [state, setState] = useState<GameState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.reveal(gameId).then(setResult, (e: Error) => setError(e.message));
+    Promise.all([api.reveal(gameId), api.getGame(gameId)]).then(
+      ([r, s]) => {
+        setState(s);
+        setResult(r);
+      },
+      (e: Error) => setError(e.message),
+    );
   }, [gameId]);
 
   if (error) {
@@ -322,16 +349,35 @@ export default function Results({ gameId, onPlayAgain }: { gameId: number; onPla
       </div>
     );
   }
-  if (!result) return <p className="muted center">Revealing the chosen games…</p>;
-  return <RevealedResults result={result} onPlayAgain={onPlayAgain} />;
+  if (!result || !state) return <p className="muted center">Revealing the chosen games…</p>;
+  return <RevealedResults result={result} state={state} onPlayAgain={onPlayAgain} onRematch={onRematch} />;
 }
 
-function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlayAgain: () => void }) {
+function RevealedResults({
+  result,
+  state,
+  onPlayAgain,
+  onRematch,
+}: {
+  result: RevealResult;
+  state: GameState;
+  onPlayAgain: () => void;
+  onRematch: (gameId: number) => void;
+}) {
   const tl = useMemo(() => buildTimeline(result), [result]);
-  const [cursor, setCursor] = useState(() => (wasSeen(result.gameId) ? tl.end : 0));
+  const online = state.online;
+  const you = online?.you ?? null;
+  // Online: both screens run the reveal from the server's start time. Local: from now, unless already watched.
+  const [t0, setT0] = useState(() =>
+    online?.revealStartedAt ? localTime(online.revealStartedAt) : wasSeen(result.gameId) ? -Infinity : Date.now(),
+  );
+  const [cursor, setCursor] = useState(() => (t0 > Date.now() ? 0 : stepAt(tl.starts, Date.now() - t0)));
+  const [waiting, setWaiting] = useState(() => t0 > Date.now());
   const [, setFlicker] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [muted, setMuted] = useMuted();
+  const [rematchId, setRematchId] = useState<number | null>(online?.rematchGameId ?? null);
+  const [rematching, setRematching] = useState(false);
   const live = useRef(cursor < tl.end); // false when we open straight onto the result: no sounds
   const rows = useRef(new Map<number, HTMLTableRowElement>());
   const top = useRef<HTMLDivElement>(null);
@@ -343,9 +389,20 @@ function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlay
   const step = tl.steps[cursor];
   const done = cursor >= tl.end;
 
-  // Advance through the timeline.
+  // Online: hold until the shared start time.
   useEffect(() => {
-    if (!live.current || done) return;
+    if (!waiting) return;
+    const id = window.setTimeout(() => setWaiting(false), Math.max(0, t0 - Date.now()));
+    const tick = window.setInterval(() => setFlicker((n) => n + 1), 250); // redraw the countdown
+    return () => {
+      window.clearTimeout(id);
+      window.clearInterval(tick);
+    };
+  }, [waiting, t0]);
+
+  // Advance through the timeline, on schedule.
+  useEffect(() => {
+    if (!live.current || done || waiting) return;
     if (step.kind === 'roll') {
       // Bring both rows into view: B's table is below A's.
       rows.current.get(step.picks.at(-1)!)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -356,12 +413,42 @@ function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlay
       setFlicker((n) => n + 1);
       sound.tick();
     }, 70) : undefined;
-    const id = window.setTimeout(() => setCursor((c) => c + 1), step.ms);
+    const nextAt = t0 + tl.starts[cursor + 1];
+    const id = window.setTimeout(() => setCursor(stepAt(tl.starts, Date.now() - t0)), Math.max(0, nextAt - Date.now()));
     return () => {
       window.clearTimeout(id);
       window.clearInterval(flick);
     };
-  }, [cursor, done, step]);
+  }, [cursor, done, step, waiting, t0, tl]);
+
+  // Online, after the result: watch for a rematch started by the other player.
+  useEffect(() => {
+    if (!online || !done || rematchId !== null) return;
+    const id = window.setInterval(async () => {
+      try {
+        const s = await api.getGame(result.gameId);
+        if (s.online?.rematchGameId) setRematchId(s.online.rematchGameId);
+      } catch {
+        // Try again next time.
+      }
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [online, done, rematchId, result.gameId]);
+
+  async function rematch() {
+    setRematching(true);
+    try {
+      if (rematchId !== null) {
+        adoptRematch(result.gameId, rematchId);
+        onRematch(rematchId);
+      } else {
+        onRematch((await api.rematch(result.gameId)).gameId);
+      }
+    } catch (e) {
+      setNote((e as Error).message);
+      setRematching(false);
+    }
+  }
 
   // The end: show the result at the top, play the result sound once, remember the reveal was watched.
   const ended = useRef(false);
@@ -371,7 +458,7 @@ function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlay
     markSeen(result.gameId);
     if (live.current) {
       sound.slam();
-      sound.swell(outcomeFor(result));
+      sound.swell(outcomeFor(result, you));
       top.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
   }, [done, result]);
@@ -388,11 +475,14 @@ function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlay
   function replay() {
     live.current = true;
     ended.current = false;
+    setWaiting(false);
+    setT0(Date.now());
     setCursor(0);
     window.scrollTo(0, 0);
   }
 
   function skip() {
+    setWaiting(false);
     setCursor(tl.end);
     top.current?.scrollIntoView({ block: 'start' });
   }
@@ -443,7 +533,7 @@ function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlay
               <span className="score-label">{teamLabels.B}</span>
             </span>
           </div>
-          <h1>{headlineFor(result)}</h1>
+          <h1>{headlineFor(result, you)}</h1>
           {result.decidedBy === 'points_tiebreak' && (
             <p className="tiebreak">Categories split evenly — decided on total points.</p>
           )}
@@ -456,7 +546,9 @@ function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlay
           <LiveScoreboard r={result} cats={live9.categories} score={live9.score} />
           <div className="reveal-controls">
             <span className="muted">
-              {inFinalRound ? (
+              {waiting ? (
+                `The reveal starts in ${Math.max(1, Math.ceil((t0 - Date.now()) / 1000))}…`
+              ) : inFinalRound ? (
                 <strong className="clutch-note">Final round · {finalRoundNote}</strong>
               ) : nowRolling ? (
                 `Rolling round ${nowRolling} of ${tl.rounds}`
@@ -570,10 +662,24 @@ function RevealedResults({ result, onPlayAgain }: { result: RevealResult; onPlay
       )}
 
       {done && (
-        <div className="center">
-          <button className="btn btn-primary btn-lg" onClick={onPlayAgain}>
-            Play Again
-          </button>
+        <div className="center end-actions">
+          {online && you ? (
+            <>
+              <button className="btn btn-primary btn-lg" onClick={rematch} disabled={rematching}>
+                {rematchId !== null ? `Join the rematch →` : rematching ? 'Setting up…' : 'Rematch'}
+              </button>
+              {rematchId !== null && !rematching && (
+                <p className="muted small">A rematch is ready, same settings and a new coin flip.</p>
+              )}
+              <button className="btn" onClick={onPlayAgain}>
+                Home
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-primary btn-lg" onClick={onPlayAgain}>
+              Play Again
+            </button>
+          )}
         </div>
       )}
     </div>

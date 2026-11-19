@@ -2,8 +2,10 @@ import { formatDate, formatPct, type CategoryResult, type RevealResult, type Rev
 
 const TEAMS: Team[] = ['A', 'B'];
 
-export function headline(r: RevealResult): string {
+/** `you`: the viewer's team in an online game. */
+export function headline(r: RevealResult, you: Team | null = null): string {
   if (r.winner === 'draw') return "It's a draw";
+  if (r.mode === 'online') return you === r.winner ? 'You win!' : `${r.winnerLabel} wins`;
   return r.mode === 'vs_cpu' && r.winner === 'A' ? 'You win!' : `${r.winnerLabel} wins`;
 }
 

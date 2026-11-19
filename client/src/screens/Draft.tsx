@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api, type GameState, type PlayerView } from '../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, localTime, type GameState, type PickView, type PlayerView, type Team } from '../api';
 import CoinFlip from '../components/CoinFlip';
 import DraftOrder from '../components/DraftOrder';
 import PlayerTable from '../components/PlayerTable';
@@ -19,6 +19,26 @@ function flipSeen(id: number): boolean {
   }
 }
 
+/** Online: poll about once a second, slower while the tab is hidden. */
+const POLL_MS = 1000;
+const POLL_HIDDEN_MS = 4000;
+
+function clockText(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Ticks while `on`, so countdowns re-render. */
+function useNow(on: boolean, every = 250): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!on) return;
+    const id = window.setInterval(() => setNow(Date.now()), every);
+    return () => window.clearInterval(id);
+  }, [on, every]);
+  return now;
+}
+
 interface Props {
   gameId: number;
   onComplete: () => void;
@@ -31,6 +51,72 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [flipDone, setFlipDone] = useState(() => flipSeen(gameId));
+  const myPicks = useRef(new Set<number>());
+
+  const online = state?.mode === 'online';
+  const you = state?.online?.you ?? null;
+
+  /** Applies a fresh state, ignoring stale ones, and announces picks made elsewhere. */
+  const apply = useCallback((next: GameState) => {
+    setState((prev) => {
+      if (prev && next.picks.length < prev.picks.length) return prev; // an older poll arriving late
+      if (prev && next.mode === 'online') {
+        const fresh = next.picks.slice(prev.picks.length);
+        const lines = fresh.map((p: PickView) =>
+          p.team === next.online?.you
+            ? myPicks.current.has(p.pickNumber)
+              ? null
+              : `Time ran out: you got ${withSeason(p.season, p.playerName)} (#${p.pickNumber}).`
+            : `${next.teamLabels[p.team]} drafted ${withSeason(p.season, p.playerName)} (#${p.pickNumber}).`,
+        );
+        const text = lines.filter(Boolean).join(' ');
+        if (text) setNotice(text);
+      }
+      return next;
+    });
+  }, []);
+
+  const load = useCallback(async () => {
+    try {
+      apply(await api.getGame(gameId));
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [gameId, apply]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Online: keep up with the other player.
+  useEffect(() => {
+    if (!online) return;
+    let stop = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        apply(await api.getGame(gameId));
+      } catch {
+        // Keep trying; a blip shouldn't end the game.
+      }
+      if (!stop) timer = window.setTimeout(poll, document.hidden ? POLL_HIDDEN_MS : POLL_MS);
+    };
+    timer = window.setTimeout(poll, POLL_MS);
+    return () => {
+      stop = true;
+      window.clearTimeout(timer);
+    };
+  }, [online, gameId, apply]);
+
+  // Online: both players go to the reveal together when the draft ends.
+  useEffect(() => {
+    if (online && state?.status !== 'lobby' && state?.status !== 'drafting' && state?.online?.revealStartedAt) onComplete();
+  }, [online, state?.status, state?.online?.revealStartedAt, onComplete]);
+
+  const turnOpensAt = state?.online?.turnStartedAt ? localTime(state.online.turnStartedAt) : null;
+  const deadline = state?.online?.turnDeadline ? localTime(state.online.turnDeadline) : null;
+  const now = useNow(online && state?.status === 'drafting');
 
   function finishFlip(s: GameState) {
     try {
@@ -47,27 +133,15 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
     }
   }
 
-  const load = useCallback(async () => {
-    try {
-      setState(await api.getGame(gameId));
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [gameId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
   async function pick(player: PlayerView) {
     if (!state?.currentTurn) return;
     const picker = state.teamLabels[state.currentTurn.team];
     setBusy(true);
     setError(null);
+    myPicks.current.add(state.currentTurn.pickNumber);
     try {
       const res = await api.pick(gameId, player.id, state.currentTurn.team);
-      setState(res.state);
+      apply(res.state);
       if (res.autoPicks.length > 0) {
         setNotice(`CPU drafted ${res.autoPicks.map((p) => `${withSeason(p.season, p.playerName)} (#${p.pickNumber})`).join(' and ')}.`);
       } else if (res.state.mode === 'pass_and_play' && res.state.currentTurn) {
@@ -78,7 +152,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
             : `${picker} took ${withSeason(player.season, player.name)}. Pass the device to ${next.label}.`,
         );
       } else {
-        setNotice(`${picker} drafted ${withSeason(player.season, player.name)}.`);
+        setNotice(`You drafted ${withSeason(player.season, player.name)}.`);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -101,15 +175,40 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
     );
   }
 
+  if (state.status === 'lobby') return <Lobby state={state} onStarted={apply} onHome={onHome} />;
+
   const turn = state.currentTurn;
   const isCpuTurn = !!turn && state.cpuTeams.includes(turn.team);
   const complete = !turn;
+  const waitingForFlip = online && turnOpensAt !== null && now < turnOpensAt;
+  const myTurn = !!turn && (online ? turn.team === you : !isCpuTurn);
+  const canPick = myTurn && !waitingForFlip;
   const pickLabel = turn && state.mode === 'pass_and_play' ? `Draft (${turn.label === 'Player 1' ? 'P1' : 'P2'})` : 'Draft';
+  const opponent: Team | null = online && you ? (you === 'A' ? 'B' : 'A') : null;
+  const opponentAway = !!opponent && state.online?.seats[opponent]?.connected === false;
+  const showFlip =
+    state.status === 'drafting' &&
+    !flipDone &&
+    (!online || (state.online?.flipAt !== null && Date.now() - localTime(state.online!.flipAt!) < 8000));
+
+  let title: string;
+  if (!turn) title = '';
+  else if (waitingForFlip) title = 'Coin flip…';
+  else if (online) title = turn.team === you ? "You're on the clock" : `${turn.label} is picking…`;
+  else if (state.mode === 'vs_cpu') title = isCpuTurn ? 'CPU is picking…' : "You're on the clock";
+  else title = `${turn.label}, you're on the clock`;
 
   return (
     <div className="draft">
-      {!flipDone && state.status === 'drafting' && (
-        <CoinFlip winner={state.firstTeam} labels={state.teamLabels} onDone={() => finishFlip(state)} />
+      {showFlip && (
+        <CoinFlip
+          winner={state.firstTeam}
+          labels={state.teamLabels}
+          onDone={() => finishFlip(state)}
+          you={you}
+          startAt={online ? localTime(state.online!.flipAt!) : undefined}
+          closeAt={online && turnOpensAt !== null ? turnOpensAt : undefined}
+        />
       )}
       <div className={`turn-banner ${turn ? `team-${turn.team}` : 'complete'}`} role="status" aria-live="polite">
         {turn ? (
@@ -117,30 +216,40 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
             <div>
               <div className="turn-kicker">
                 Round {turn.round} of {state.settings.rosterSize} · Pick {turn.pickNumber} of {state.totalPicks}
+                {online && you === null && ' · watching'}
               </div>
-              <div className="turn-title">
-                {state.mode === 'vs_cpu'
-                  ? isCpuTurn
-                    ? 'CPU is picking…'
-                    : "You're on the clock"
-                  : `${turn.label}, you're on the clock`}
-              </div>
+              <div className="turn-title">{title}</div>
             </div>
+            {deadline !== null && !waitingForFlip && (
+              <div className={`pick-clock ${deadline - now < 10_000 ? 'urgent' : ''}`} aria-label="Time left for this pick">
+                {clockText(deadline - now)}
+              </div>
+            )}
             {notice && <div className="turn-notice">{notice}</div>}
           </>
         ) : (
           <>
             <div>
               <div className="turn-kicker">Draft complete</div>
-              <div className="turn-title">Rosters are set. Time to see who showed up.</div>
+              <div className="turn-title">
+                {online ? 'Rosters are set. The reveal is starting…' : 'Rosters are set. Time to see who showed up.'}
+              </div>
             </div>
-            <button className="btn btn-primary btn-lg" onClick={onComplete}>
-              Reveal the games →
-            </button>
+            {!online && (
+              <button className="btn btn-primary btn-lg" onClick={onComplete}>
+                Reveal the games →
+              </button>
+            )}
           </>
         )}
       </div>
 
+      {opponentAway && turn && (
+        <p className="muted small center away-note">
+          {state.teamLabels[opponent!]} seems to be offline. The game waits for them
+          {state.online?.pickSeconds ? ', and the pick clock keeps running.' : '.'}
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
 
       <DraftOrder state={state} />
@@ -158,7 +267,7 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
           <PlayerTable
             players={state.available}
             show={state.settings}
-            canPick={!!turn && !isCpuTurn}
+            canPick={canPick}
             pickLabel={pickLabel}
             busy={busy}
             onPick={pick}
@@ -182,6 +291,99 @@ export default function Draft({ gameId, onComplete, onHome }: Props) {
           isCpu={state.cpuTeams.includes('B')}
         />
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ lobby
+
+function Lobby({ state, onStarted, onHome }: { state: GameState; onStarted: (s: GameState) => void; onHome: () => void }) {
+  const o = state.online!;
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const link = `${window.location.origin}/?join=${o.roomCode}`;
+  const host = o.seats.A;
+  const guest = o.seats.B;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      setError('Could not copy. Select the link and copy it yourself.');
+    }
+  }
+
+  async function start() {
+    setBusy(true);
+    setError(null);
+    try {
+      onStarted(await api.start(state.id));
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+
+  if (o.expired) {
+    return (
+      <div className="panel center lobby">
+        <h2>This game expired</h2>
+        <p className="muted">Games close after 24 hours without a pick.</p>
+        <button className="btn btn-primary" onClick={onHome}>
+          Start a new one
+        </button>
+      </div>
+    );
+  }
+
+  const s = state.settings;
+  return (
+    <div className="lobby">
+      <section className="panel lobby-room">
+        <p className="coin-kicker">Room code</p>
+        <div className="room-code">{o.roomCode}</div>
+        {o.you === 'A' && (
+          <div className="invite">
+            <input className="invite-link" readOnly value={link} onFocus={(e) => e.currentTarget.select()} aria-label="Invite link" />
+            <button className="btn btn-primary" onClick={copy}>
+              {copied ? 'Copied!' : 'Copy invite link'}
+            </button>
+          </div>
+        )}
+        <p className="muted small">
+          Teams of {s.rosterSize} · pool of {s.poolSize}
+          {s.uniquePlayers ? ' · one season per player' : ''} · pick clock {o.pickSeconds ? `${o.pickSeconds}s` : 'off'}
+        </p>
+      </section>
+
+      <section className="panel lobby-seats" aria-label="Players">
+        {(['A', 'B'] as Team[]).map((t) => {
+          const seat = o.seats[t];
+          return (
+            <div key={t} className={`lobby-seat team-${t}`}>
+              <span className={`presence ${seat?.connected ? 'on' : ''}`} aria-hidden />
+              <span className="lobby-name">
+                {seat ? seat.name : 'Waiting for your friend…'}
+                {o.you === t && <span className="tag">You</span>}
+              </span>
+              <span className="muted small">{t === 'A' ? 'Host' : seat ? 'Joined' : ''}</span>
+            </div>
+          );
+        })}
+      </section>
+
+      {o.you === 'A' ? (
+        <button className="btn btn-primary btn-lg" onClick={start} disabled={busy || !guest}>
+          {guest ? (busy ? 'Starting…' : 'Start the game') : 'Waiting for your friend to join…'}
+        </button>
+      ) : o.you === 'B' ? (
+        <p className="center">Waiting for {host?.name ?? 'the host'} to start the game…</p>
+      ) : (
+        <p className="center muted">This game is for {host?.name} and a friend. Ask for an invite to play.</p>
+      )}
+      {error && <p className="error center">{error}</p>}
     </div>
   );
 }

@@ -23,8 +23,35 @@ export interface GameRecord extends GameSettings {
   /** Coin-flip winner: picks first. */
   firstTeam: Team;
   createdAt: Date;
+  // Online games only (null / unused otherwise).
+  roomCode: string | null;
+  pickSeconds: number | null;
+  startedAt: Date | null;
+  turnStartedAt: Date | null;
+  revealStartedAt: Date | null;
+  rematchGameId: number | null;
   revealedAt: Date | null;
+  lastActivityAt: Date;
 }
+
+export interface SeatRecord {
+  team: Team;
+  name: string;
+  tokenHash: string;
+  joinedAt: Date;
+  lastSeenAt: Date;
+}
+
+export interface OnlineOptions {
+  roomCode: string;
+  pickSeconds: number | null;
+  /** The service's clock (so tests can control time). */
+  now: Date;
+}
+
+export type GameUpdate = Partial<
+  Pick<GameRecord, 'status' | 'startedAt' | 'turnStartedAt' | 'revealStartedAt' | 'rematchGameId' | 'lastActivityAt'>
+>;
 
 export interface GameResultUpdate {
   winner: Winner;
@@ -42,7 +69,21 @@ export interface GameRepository {
   /** The ids of every game log of the given player-seasons. */
   listGameLogIds(playerSeasonIds: number[]): Promise<PlayerSeasonLogIds[]>;
   /** Creates the game and its locked games atomically. */
-  createGame(mode: GameMode, settings: GameSettings, firstTeam: Team, locks: LockRecord[]): Promise<GameRecord>;
+  /** Online games (with `online`) start in the lobby; others start drafting. */
+  createGame(
+    mode: GameMode,
+    settings: GameSettings,
+    firstTeam: Team,
+    locks: LockRecord[],
+    online?: OnlineOptions,
+  ): Promise<GameRecord>;
+  findGameIdByRoomCode(roomCode: string): Promise<number | null>;
+  listSeats(gameId: number): Promise<SeatRecord[]>;
+  /** `at` is the join time, also the first "last seen". */
+  addSeat(gameId: number, seat: Pick<SeatRecord, 'team' | 'name' | 'tokenHash'>, at: Date): Promise<SeatRecord>;
+  /** Marks a seat's player as seen now (for the "online" dot). */
+  touchSeat(gameId: number, team: Team, at: Date): Promise<void>;
+  updateGame(gameId: number, update: GameUpdate): Promise<void>;
   findGame(gameId: number): Promise<GameRecord | null>;
   /** The game's pool, with season averages. Never includes the locked games. */
   listPool(gameId: number): Promise<PoolPlayer[]>;

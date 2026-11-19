@@ -14,7 +14,14 @@ import {
   type StatLine,
   type Team,
 } from '../domain/types.js';
-import type { GameRecord, GameRepository, GameResultUpdate } from './gameRepository.js';
+import type {
+  GameRecord,
+  GameRepository,
+  GameResultUpdate,
+  GameUpdate,
+  OnlineOptions,
+  SeatRecord,
+} from './gameRepository.js';
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -48,13 +55,25 @@ export class PrismaGameRepository implements GameRepository {
     return [...byPs].map(([playerSeasonId, gameLogIds]) => ({ playerSeasonId, gameLogIds }));
   }
 
-  async createGame(mode: GameMode, settings: GameSettings, firstTeam: Team, locks: LockRecord[]): Promise<GameRecord> {
+  async createGame(
+    mode: GameMode,
+    settings: GameSettings,
+    firstTeam: Team,
+    locks: LockRecord[],
+    online?: OnlineOptions,
+  ): Promise<GameRecord> {
     // Nested create => the game and its locks are inserted in a single transaction.
     return this.db.game.create({
       data: {
         mode,
         ...settings,
         firstTeam,
+        ...(online && {
+          status: 'lobby',
+          roomCode: online.roomCode,
+          pickSeconds: online.pickSeconds,
+          lastActivityAt: online.now,
+        }),
         players: {
           createMany: {
             data: locks.map((l) => ({ playerSeasonId: l.playerSeasonId, lockedGameLogId: l.lockedGameLogId })),
@@ -149,6 +168,32 @@ export class PrismaGameRepository implements GameRepository {
       where: { id: gameId },
       data: { status: 'revealed', revealedAt: new Date(), ...result },
     });
+  }
+
+  async findGameIdByRoomCode(roomCode: string): Promise<number | null> {
+    const g = await this.db.game.findUnique({ where: { roomCode }, select: { id: true } });
+    return g?.id ?? null;
+  }
+
+  async listSeats(gameId: number): Promise<SeatRecord[]> {
+    return this.db.gameSeat.findMany({
+      where: { gameId },
+      select: { team: true, name: true, tokenHash: true, joinedAt: true, lastSeenAt: true },
+      orderBy: { team: 'asc' },
+    });
+  }
+
+  async addSeat(gameId: number, seat: Pick<SeatRecord, 'team' | 'name' | 'tokenHash'>, at: Date): Promise<SeatRecord> {
+    const s = await this.db.gameSeat.create({ data: { gameId, ...seat, joinedAt: at, lastSeenAt: at } });
+    return { team: s.team, name: s.name, tokenHash: s.tokenHash, joinedAt: s.joinedAt, lastSeenAt: s.lastSeenAt };
+  }
+
+  async touchSeat(gameId: number, team: Team, at: Date): Promise<void> {
+    await this.db.gameSeat.update({ where: { gameId_team: { gameId, team } }, data: { lastSeenAt: at } });
+  }
+
+  async updateGame(gameId: number, update: GameUpdate): Promise<void> {
+    await this.db.game.update({ where: { id: gameId }, data: update });
   }
 
   async withGameLock<T>(gameId: number, fn: (repo: GameRepository) => Promise<T>): Promise<T> {

@@ -11,7 +11,14 @@ import type {
   PoolPlayer,
   Team,
 } from '../../src/domain/types.js';
-import type { GameRecord, GameRepository, GameResultUpdate } from '../../src/repo/gameRepository.js';
+import type {
+  GameRecord,
+  GameRepository,
+  GameResultUpdate,
+  GameUpdate,
+  OnlineOptions,
+  SeatRecord,
+} from '../../src/repo/gameRepository.js';
 
 /**
  * In-memory GameRepository for unit tests. Mirrors the DB's uniqueness
@@ -22,6 +29,7 @@ export class InMemoryGameRepository implements GameRepository {
   games = new Map<number, GameRecord>();
   locks = new Map<number, LockRecord[]>();
   picks = new Map<number, PickRecord[]>();
+  seats = new Map<number, SeatRecord[]>();
   private nextId = 1;
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -41,13 +49,29 @@ export class InMemoryGameRepository implements GameRepository {
     }));
   }
 
-  async createGame(mode: GameMode, settings: GameSettings, firstTeam: Team, locks: LockRecord[]): Promise<GameRecord> {
+  async createGame(
+    mode: GameMode,
+    settings: GameSettings,
+    firstTeam: Team,
+    locks: LockRecord[],
+    online?: OnlineOptions,
+  ): Promise<GameRecord> {
+    if (online && [...this.games.values()].some((g) => g.roomCode === online.roomCode)) {
+      throw Object.assign(new Error('room code taken'), { code: 'P2002' });
+    }
     const game: GameRecord = {
       id: this.nextId++,
       mode,
       ...settings,
       firstTeam,
-      status: 'drafting',
+      roomCode: online?.roomCode ?? null,
+      pickSeconds: online?.pickSeconds ?? null,
+      startedAt: null,
+      turnStartedAt: null,
+      revealStartedAt: null,
+      rematchGameId: null,
+      lastActivityAt: online?.now ?? new Date(),
+      status: online ? 'lobby' : 'drafting',
       winner: null,
       scoreA: null,
       scoreB: null,
@@ -76,6 +100,33 @@ export class InMemoryGameRepository implements GameRepository {
     return this.players.filter((p) => teams.has(p.id)).map((p) => ({ ...p, team: teams.get(p.id)! }));
   }
 
+  async findGameIdByRoomCode(roomCode: string): Promise<number | null> {
+    return [...this.games.values()].find((g) => g.roomCode === roomCode)?.id ?? null;
+  }
+
+  async listSeats(gameId: number): Promise<SeatRecord[]> {
+    return (this.seats.get(gameId) ?? []).map((s) => ({ ...s })).sort((a, b) => a.team.localeCompare(b.team));
+  }
+
+  async addSeat(gameId: number, seat: Pick<SeatRecord, 'team' | 'name' | 'tokenHash'>, at: Date): Promise<SeatRecord> {
+    const list = this.seats.get(gameId) ?? [];
+    if (list.some((s) => s.team === seat.team)) throw Object.assign(new Error('seat taken'), { code: 'P2002' });
+    const s = { ...seat, joinedAt: at, lastSeenAt: at };
+    this.seats.set(gameId, [...list, s]);
+    return { ...s };
+  }
+
+  async touchSeat(gameId: number, team: Team, at: Date): Promise<void> {
+    const s = (this.seats.get(gameId) ?? []).find((x) => x.team === team);
+    if (s) s.lastSeenAt = at;
+  }
+
+  async updateGame(gameId: number, update: GameUpdate): Promise<void> {
+    const g = this.games.get(gameId);
+    if (!g) throw new Error(`game ${gameId} missing`);
+    Object.assign(g, update);
+  }
+
   async listPicks(gameId: number): Promise<PickRecord[]> {
     return [...(this.picks.get(gameId) ?? [])].sort((a, b) => a.pickNumber - b.pickNumber);
   }
@@ -102,6 +153,8 @@ export class InMemoryGameRepository implements GameRepository {
 
   async addPick(gameId: number, pick: { pickNumber: number; team: Team; playerSeasonId: number }): Promise<PickRecord> {
     const list = this.picks.get(gameId)!;
+    // Like the DB trigger: picks only while drafting.
+    if (this.games.get(gameId)!.status !== 'drafting') throw new Error(`game ${gameId} is not drafting`);
     if (list.some((p) => p.pickNumber === pick.pickNumber || p.playerSeasonId === pick.playerSeasonId)) {
       throw Object.assign(new Error('unique violation'), { code: 'P2002' });
     }

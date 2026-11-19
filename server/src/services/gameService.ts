@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import {
   DEFAULT_SETTINGS,
   DraftRuleError,
@@ -27,7 +27,7 @@ import type {
   Winner,
 } from '../domain/types.js';
 import { HttpError, notFound } from '../errors.js';
-import type { GameRecord, GameRepository } from '../repo/gameRepository.js';
+import type { GameRecord, GameRepository, SeatRecord } from '../repo/gameRepository.js';
 
 /** In vs_cpu mode the human is always Team A and drafts first. */
 export const HUMAN_TEAM: Team = 'A';
@@ -35,6 +35,28 @@ export const CPU_TEAM: Team = 'B';
 
 /** Cryptographically strong uniform float in [0, 1). */
 export const secureRng: Rng = () => randomInt(0, 2 ** 48 - 1) / 2 ** 48;
+
+/** Online timings. Both screens schedule from these server timestamps, so they stay in sync. */
+export const ONLINE = {
+  /** Host presses Start → the coin flip starts on both screens (time for the other player's poll to see it). */
+  FLIP_LEAD_MS: 1500,
+  /** Host presses Start → the first pick's clock starts (the flip, plus a moment to read the result). */
+  FIRST_TURN_LEAD_MS: 5000,
+  /** Last pick → the reveal starts on both screens. */
+  REVEAL_LEAD_MS: 2500,
+  /** A player seen this recently counts as connected. */
+  CONNECTED_MS: 15_000,
+  /** Record "last seen" at most this often (polls come every second or so). */
+  TOUCH_MS: 5_000,
+  /** Lobby or drafting games with no join, start or pick for this long expire. */
+  EXPIRE_MS: 24 * 60 * 60 * 1000,
+  PICK_SECONDS: [30, 60, 90] as const,
+} as const;
+
+const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
+const ROOM_CODE_LENGTH = 4;
+
+export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 // ------------------------------------------------------------------ DTOs
 
@@ -93,6 +115,25 @@ export interface PickView {
   pickedAt: string;
 }
 
+/** Online games only: the room, seats, and the server timestamps both screens schedule from. */
+export interface OnlineView {
+  roomCode: string;
+  /** Which team the viewer's token holds, or null for someone just looking. */
+  you: Team | null;
+  seats: Record<Team, { name: string; connected: boolean } | null>;
+  pickSeconds: number | null;
+  /** When the coin flip starts on both screens. */
+  flipAt: string | null;
+  /** When the current turn began; picks open at the first one. */
+  turnStartedAt: string | null;
+  /** When the clock runs out and the best available player is picked automatically. */
+  turnDeadline: string | null;
+  /** When the reveal starts on both screens. */
+  revealStartedAt: string | null;
+  rematchGameId: number | null;
+  expired: boolean;
+}
+
 export interface GameStateView {
   id: number;
   mode: GameMode;
@@ -112,6 +153,17 @@ export interface GameStateView {
   picks: PickView[];
   /** Only populated once the game has been revealed. Never contains locked game lines. */
   result: { winner: Winner; score: { A: number; B: number } } | null;
+  online: OnlineView | null;
+  /** The server's clock, so clients can line up the online timestamps with their own. */
+  serverNow: string;
+}
+
+/** Returned once when you create or join an online game: keep the token, it is your seat. */
+export interface SeatGrant {
+  gameId: number;
+  token: string;
+  team: Team;
+  state: GameStateView;
 }
 
 export interface PickResponse {
@@ -151,13 +203,31 @@ export class GameService {
     private readonly rng: Rng = secureRng,
     /** Who picks first. A fair coin by default; tests can fix it. */
     private readonly coinFlip: () => Team = () => (rng() < 0.5 ? 'A' : 'B'),
+    /** Injected so tests can control the pick clock and online timings. */
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   /**
-   * Creates a game: draws a random pool of player-seasons from the universe and
-   * locks one random game from that season for each of them.
+   * Creates a local game (vs CPU or pass-and-play): draws a random pool of player-seasons
+   * from the universe and locks one random game from that season for each of them.
    */
-  async createGame(mode: GameMode, settings: Partial<GameSettings> = {}): Promise<GameStateView> {
+  async createGame(mode: Exclude<GameMode, 'online'>, settings: Partial<GameSettings> = {}): Promise<GameStateView> {
+    const game = await this.newGame(mode, settings);
+    if (mode === 'vs_cpu' && game.firstTeam === CPU_TEAM) {
+      // The CPU won the coin flip: it makes the first pick right away.
+      await this.repo.withGameLock(game.id, async (repo) => {
+        const [pool, picks] = await Promise.all([repo.listPool(game.id), repo.listPicks(game.id)]);
+        await this.cpuPicks(repo, game, pool, picks);
+      });
+    }
+    return this.getState(game.id);
+  }
+
+  private async newGame(
+    mode: GameMode,
+    settings: Partial<GameSettings>,
+    online?: { pickSeconds: number | null },
+  ): Promise<GameRecord> {
     const given = Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== undefined));
     const s = validateSettings({ ...DEFAULT_SETTINGS, ...given });
     const universe = await this.repo.listUniverse(UNIVERSE_TOP_N_PER_SEASON);
@@ -172,27 +242,196 @@ export class GameService {
       throw e;
     }
     const locks = lockRandomGames(await this.repo.listGameLogIds(poolIds), this.rng);
-    const game = await this.repo.createGame(mode, s, this.coinFlip(), locks);
-    if (mode === 'vs_cpu' && game.firstTeam === CPU_TEAM) {
-      // The CPU won the coin flip: it makes the first pick right away.
-      await this.repo.withGameLock(game.id, async (repo) => {
-        const [pool, picks] = await Promise.all([repo.listPool(game.id), repo.listPicks(game.id)]);
-        await this.cpuPicks(repo, game, pool, picks);
-      });
+    if (!online) return this.repo.createGame(mode, s, this.coinFlip(), locks);
+    if (online.pickSeconds !== null && !(ONLINE.PICK_SECONDS as readonly number[]).includes(online.pickSeconds)) {
+      throw new HttpError(400, 'INVALID_SETTINGS', `Pick clock must be off or one of ${ONLINE.PICK_SECONDS.join(', ')} seconds.`);
     }
-    return this.getState(game.id);
+    // Room codes are short, so retry on the rare collision.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const roomCode = this.roomCode();
+      if ((await this.repo.findGameIdByRoomCode(roomCode)) !== null) continue;
+      try {
+        return await this.repo.createGame(mode, s, this.coinFlip(), locks, {
+          roomCode,
+          pickSeconds: online.pickSeconds,
+          now: this.now(),
+        });
+      } catch (e) {
+        if ((e as { code?: string }).code !== 'P2002') throw e;
+      }
+    }
+    throw new HttpError(503, 'NO_ROOM_CODE', 'Could not find a free room code. Try again.');
   }
 
-  async getState(gameId: number): Promise<GameStateView> {
-    const game = await this.repo.findGame(gameId);
+  private roomCode(): string {
+    return Array.from(
+      { length: ROOM_CODE_LENGTH },
+      () => ROOM_CODE_ALPHABET[Math.floor(this.rng() * ROOM_CODE_ALPHABET.length)],
+    ).join('');
+  }
+
+  // ---------------------------------------------------------- online rooms
+
+  /** Creates an online game in the lobby. The host holds Team A. */
+  async createOnlineGame(
+    hostName: string,
+    settings: Partial<GameSettings> = {},
+    pickSeconds: number | null = null,
+  ): Promise<SeatGrant> {
+    const name = cleanName(hostName); // before creating anything
+    const game = await this.newGame('online', settings, { pickSeconds });
+    const token = newToken();
+    await this.repo.addSeat(game.id, { team: 'A', name, tokenHash: hashToken(token) }, this.now());
+    return { gameId: game.id, token, team: 'A', state: await this.getState(game.id, token) };
+  }
+
+  /** A friend joins by room code and takes Team B. */
+  async joinGame(roomCode: string, name: string): Promise<SeatGrant> {
+    const gameId = await this.repo.findGameIdByRoomCode(roomCode.trim().toUpperCase());
+    if (gameId === null) throw new HttpError(404, 'ROOM_NOT_FOUND', `No game with code ${roomCode}.`);
+    const token = newToken();
+    await this.repo.withGameLock(gameId, async (repo) => {
+      const game = (await repo.findGame(gameId))!;
+      this.assertNotExpired(game);
+      if (game.status !== 'lobby') throw new HttpError(409, 'ALREADY_STARTED', 'This game has already started.');
+      const seats = await repo.listSeats(gameId);
+      if (seats.some((s) => s.team === 'B')) throw new HttpError(409, 'ROOM_FULL', 'This game already has two players.');
+      await repo.addSeat(gameId, { team: 'B', name: cleanName(name), tokenHash: hashToken(token) }, this.now());
+      await repo.updateGame(gameId, { lastActivityAt: this.now() });
+    });
+    return { gameId, token, team: 'B', state: await this.getState(gameId, token) };
+  }
+
+  /** The host starts the game once the friend has joined: the coin flip plays, then the draft opens. */
+  async startGame(gameId: number, token: string | undefined): Promise<GameStateView> {
+    await this.repo.withGameLock(gameId, async (repo) => {
+      const game = await repo.findGame(gameId);
+      if (!game || game.mode !== 'online') throw notFound(`Online game ${gameId}`);
+      this.assertNotExpired(game);
+      const seats = await repo.listSeats(gameId);
+      const seat = seatFor(seats, token);
+      if (seat?.team !== 'A') throw new HttpError(403, 'NOT_HOST', 'Only the host can start the game.');
+      if (game.status !== 'lobby') throw new HttpError(409, 'ALREADY_STARTED', 'This game has already started.');
+      if (!seats.some((s) => s.team === 'B')) {
+        throw new HttpError(409, 'WAITING_FOR_OPPONENT', 'Wait for your friend to join first.');
+      }
+      const now = this.now();
+      await repo.updateGame(gameId, {
+        status: 'drafting',
+        startedAt: now,
+        turnStartedAt: new Date(now.getTime() + ONLINE.FIRST_TURN_LEAD_MS),
+        lastActivityAt: now,
+      });
+    });
+    return this.getState(gameId, token);
+  }
+
+  /**
+   * After a finished online game: a new game with the same settings and the same two players
+   * (a fresh pool and coin flip). Idempotent: both players asking get the same rematch.
+   */
+  async rematch(gameId: number, token: string | undefined): Promise<{ gameId: number }> {
+    const newId = await this.repo.withGameLock(gameId, async (repo) => {
+      const game = await repo.findGame(gameId);
+      if (!game || game.mode !== 'online') throw notFound(`Online game ${gameId}`);
+      const seats = await repo.listSeats(gameId);
+      if (!seatFor(seats, token)) throw new HttpError(403, 'NOT_A_PLAYER', 'Only the two players can ask for a rematch.');
+      if (game.status !== 'draft_complete' && game.status !== 'revealed') {
+        throw new HttpError(409, 'NOT_FINISHED', 'Finish this game first.');
+      }
+      if (game.rematchGameId !== null) return game.rematchGameId;
+      const next = await this.newGame('online', settingsOf(game), { pickSeconds: game.pickSeconds });
+      // Same seats and tokens: both players are already signed in to the rematch.
+      for (const s of seats) {
+        await this.repo.addSeat(next.id, { team: s.team, name: s.name, tokenHash: s.tokenHash }, this.now());
+      }
+      await repo.updateGame(gameId, { rematchGameId: next.id });
+      return next.id;
+    });
+    return { gameId: newId };
+  }
+
+  private assertNotExpired(game: GameRecord) {
+    if (isExpired(game, this.now())) {
+      throw new HttpError(410, 'GAME_EXPIRED', 'This game expired after 24 hours without a pick.');
+    }
+  }
+
+  /**
+   * Online pick clock. There's no always-running server (it runs as serverless functions),
+   * so the clock is enforced whenever anyone asks: every overdue turn gets the best available
+   * player, picked the CPU's way. Each auto-picked turn's clock starts at the previous deadline.
+   * Call inside the game lock.
+   */
+  private async enforceClock(repo: GameRepository, game: GameRecord, picks: PickRecord[]): Promise<void> {
+    const deadline = turnDeadline(game);
+    const now = this.now();
+    if (!deadline || deadline > now || isExpired(game, now)) return;
+    const pool = await repo.listPool(game.id);
+    const values = poolValues(pool);
+    const poolIds = new Set(pool.map((p) => p.id));
+    const total = totalPicks(game.rosterSize);
+    let turnStart = game.turnStartedAt!;
+    let due = deadline;
+    while (picks.length < total && due <= now) {
+      const pickNumber = picks.length + 1;
+      const team = teamForPick(pickNumber, game.firstTeam);
+      const taken = new Set(picks.map((p) => p.playerSeasonId));
+      const choice = cpuChoosePlayer(
+        pool.filter((p) => !taken.has(p.id)),
+        values,
+        roundForPick(pickNumber),
+        game.rosterSize,
+        this.rng,
+      );
+      const slot = validatePick({ picks, rosterSize: game.rosterSize, firstTeam: game.firstTeam, poolIds, playerSeasonId: choice.id, team });
+      picks.push(await repo.addPick(game.id, { pickNumber: slot.pickNumber, team, playerSeasonId: choice.id }));
+      turnStart = due;
+      due = new Date(turnStart.getTime() + game.pickSeconds! * 1000);
+    }
+    await repo.updateGame(game.id, { turnStartedAt: turnStart });
+    game.turnStartedAt = turnStart;
+    await this.finishDraftIfComplete(repo, game, picks);
+  }
+
+  private async finishDraftIfComplete(repo: GameRepository, game: GameRecord, picks: PickRecord[]): Promise<void> {
+    if (picks.length < totalPicks(game.rosterSize)) return;
+    game.status = 'draft_complete';
+    if (game.mode === 'online') {
+      game.revealStartedAt = new Date(this.now().getTime() + ONLINE.REVEAL_LEAD_MS);
+      await repo.updateGame(game.id, { status: 'draft_complete', revealStartedAt: game.revealStartedAt });
+    } else {
+      await repo.setStatus(game.id, 'draft_complete');
+    }
+  }
+
+  // ---------------------------------------------------------- all modes
+
+  /** `token` identifies an online player (it's ignored for local games). */
+  async getState(gameId: number, token?: string): Promise<GameStateView> {
+    let game = await this.repo.findGame(gameId);
     if (!game) throw notFound(`Game ${gameId}`);
+    const now = this.now();
+    if (game.mode === 'online' && game.status === 'drafting' && (turnDeadline(game)?.getTime() ?? Infinity) <= now.getTime()) {
+      await this.repo.withGameLock(gameId, async (repo) => {
+        const locked = (await repo.findGame(gameId))!;
+        if (locked.status === 'drafting') await this.enforceClock(repo, locked, await repo.listPicks(gameId));
+      });
+      game = (await this.repo.findGame(gameId))!;
+    }
     const wantClues = game.showGameDate && game.status !== 'revealed';
-    const [pool, picks, clues] = await Promise.all([
+    const [pool, picks, clues, seats] = await Promise.all([
       this.repo.listPool(gameId),
       this.repo.listPicks(gameId),
       wantClues ? this.repo.listGameClues(gameId) : Promise.resolve([]),
+      game.mode === 'online' ? this.repo.listSeats(gameId) : Promise.resolve([]),
     ]);
-    return buildState(game, pool, picks, clues);
+    const viewer = seatFor(seats, token);
+    if (viewer && now.getTime() - viewer.lastSeenAt.getTime() > ONLINE.TOUCH_MS) {
+      await this.repo.touchSeat(gameId, viewer.team, now);
+      viewer.lastSeenAt = now;
+    }
+    return buildState(game, pool, picks, clues, seats, viewer?.team ?? null, now);
   }
 
   /**
@@ -200,20 +439,42 @@ export class GameService {
    * In vs_cpu mode the CPU then picks until it is the human's turn again
    * (snake order means the CPU sometimes has two picks in a row).
    */
-  async makePick(gameId: number, input: { playerSeasonId: number; team?: Team }): Promise<PickResponse> {
+  async makePick(
+    gameId: number,
+    input: { playerSeasonId: number; team?: Team },
+    token?: string,
+  ): Promise<PickResponse> {
     const autoPickNumbers = await this.repo.withGameLock(gameId, async (repo) => {
       const game = await repo.findGame(gameId);
       if (!game) throw notFound(`Game ${gameId}`);
+      const now = this.now();
+      if (game.mode === 'online') {
+        this.assertNotExpired(game);
+        // turnStartedAt is only in the future before the first pick, while the coin flip plays.
+        if (game.status === 'lobby' || (game.turnStartedAt && now < game.turnStartedAt)) {
+          throw new HttpError(409, 'NOT_STARTED', 'The draft opens when the coin lands.');
+        }
+      }
       if (game.status !== 'drafting') {
         throw new DraftRuleError('DRAFT_COMPLETE', 'The draft is already complete.');
       }
       const { rosterSize } = game;
-      const total = totalPicks(rosterSize);
 
       const [pool, picks] = await Promise.all([repo.listPool(gameId), repo.listPicks(gameId)]);
       const poolIds = new Set(pool.map((p) => p.id));
 
       let actingTeam = input.team;
+      if (game.mode === 'online') {
+        const seat = seatFor(await repo.listSeats(gameId), token);
+        if (!seat) throw new HttpError(403, 'NOT_A_PLAYER', "You're not a player in this game.");
+        if (input.team !== undefined && input.team !== seat.team) {
+          throw new DraftRuleError('NOT_YOUR_TURN', `You are Team ${seat.team}.`);
+        }
+        actingTeam = seat.team;
+        // Overdue turns are auto-picked first; then it may not be your turn any more.
+        await this.enforceClock(repo, game, picks);
+        if (game.status !== 'drafting') throw new DraftRuleError('DRAFT_COMPLETE', 'The draft is already complete.');
+      }
       if (game.mode === 'vs_cpu') {
         actingTeam ??= HUMAN_TEAM;
         if (actingTeam !== HUMAN_TEAM) {
@@ -234,13 +495,15 @@ export class GameService {
       );
 
       const autoPicks = game.mode === 'vs_cpu' ? await this.cpuPicks(repo, game, pool, picks) : [];
-      if (picks.length === total) {
-        await repo.setStatus(gameId, 'draft_complete');
+      if (game.mode === 'online') {
+        game.turnStartedAt = now;
+        await repo.updateGame(gameId, { turnStartedAt: now, lastActivityAt: now });
       }
+      await this.finishDraftIfComplete(repo, game, picks);
       return autoPicks;
     });
 
-    const state = await this.getState(gameId);
+    const state = await this.getState(gameId, token);
     return { state, autoPicks: state.picks.filter((p) => autoPickNumbers.includes(p.pickNumber)) };
   }
 
@@ -309,7 +572,7 @@ export class GameService {
       const values = poolValues(pool);
       const playersById = new Map(pool.map((p) => [p.id, p]));
       const linesById = new Map(lines.map((l) => [l.playerSeasonId, l]));
-      const labels = teamLabels(game.mode);
+      const labels = labelsFor(game.mode, game.mode === 'online' ? await repo.listSeats(gameId) : []);
 
       const team = (side: Team) => {
         const players: RevealedPlayer[] = picks
@@ -363,6 +626,73 @@ export class GameService {
 
 export function teamLabels(mode: GameMode): Record<Team, string> {
   return mode === 'vs_cpu' ? { A: 'You', B: 'CPU' } : { A: 'Player 1', B: 'Player 2' };
+}
+
+/** Online games are labelled with the players' names. */
+function labelsFor(mode: GameMode, seats: SeatRecord[]): Record<Team, string> {
+  if (mode !== 'online') return teamLabels(mode);
+  const name = (t: Team) => seats.find((s) => s.team === t)?.name;
+  return { A: name('A') ?? 'Host', B: name('B') ?? 'Waiting…' };
+}
+
+function newToken(): string {
+  return randomBytes(24).toString('base64url');
+}
+
+function cleanName(name: string): string {
+  const n = name.trim().replace(/\s+/g, ' ');
+  if (n.length < 1 || n.length > 20) throw new HttpError(400, 'INVALID_NAME', 'Name must be 1–20 characters.');
+  return n;
+}
+
+function seatFor(seats: SeatRecord[], token: string | undefined): SeatRecord | undefined {
+  if (!token) return undefined;
+  const h = hashToken(token);
+  return seats.find((s) => s.tokenHash === h);
+}
+
+function turnDeadline(game: GameRecord): Date | null {
+  if (game.mode !== 'online' || game.status !== 'drafting' || !game.pickSeconds || !game.turnStartedAt) return null;
+  return new Date(game.turnStartedAt.getTime() + game.pickSeconds * 1000);
+}
+
+function isExpired(game: GameRecord, now: Date): boolean {
+  return (
+    game.mode === 'online' &&
+    (game.status === 'lobby' || game.status === 'drafting') &&
+    now.getTime() - game.lastActivityAt.getTime() > ONLINE.EXPIRE_MS
+  );
+}
+
+function settingsOf(g: GameRecord): GameSettings {
+  return {
+    poolSize: g.poolSize,
+    rosterSize: g.rosterSize,
+    uniquePlayers: g.uniquePlayers,
+    showSeasonTeam: g.showSeasonTeam,
+    showGameDate: g.showGameDate,
+    showAverages: g.showAverages,
+  };
+}
+
+function onlineView(game: GameRecord, seats: SeatRecord[], you: Team | null, now: Date): OnlineView {
+  const seat = (t: Team) => {
+    const s = seats.find((x) => x.team === t);
+    return s ? { name: s.name, connected: now.getTime() - s.lastSeenAt.getTime() < ONLINE.CONNECTED_MS } : null;
+  };
+  const iso = (d: Date | null) => d?.toISOString() ?? null;
+  return {
+    roomCode: game.roomCode!,
+    you,
+    seats: { A: seat('A'), B: seat('B') },
+    pickSeconds: game.pickSeconds,
+    flipAt: game.startedAt ? new Date(game.startedAt.getTime() + ONLINE.FLIP_LEAD_MS).toISOString() : null,
+    turnStartedAt: iso(game.turnStartedAt),
+    turnDeadline: iso(turnDeadline(game)),
+    revealStartedAt: iso(game.revealStartedAt),
+    rematchGameId: game.rematchGameId,
+    expired: isExpired(game, now),
+  };
 }
 
 const round3 = (n: number | null) => (n === null ? null : Math.round(n * 1000) / 1000);
@@ -423,8 +753,16 @@ export function toPlayerView(p: PoolPlayer, values: ReadonlyMap<number, number>)
   };
 }
 
-function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[], clues: GameClue[]): GameStateView {
-  const labels = teamLabels(game.mode);
+function buildState(
+  game: GameRecord,
+  pool: PoolPlayer[],
+  picks: PickRecord[],
+  clues: GameClue[],
+  seats: SeatRecord[],
+  viewer: Team | null,
+  now: Date,
+): GameStateView {
+  const labels = labelsFor(game.mode, seats);
   // Before the reveal, send only what the settings allow. After it, everything.
   const revealed = game.status === 'revealed';
   const show = revealed ? { showSeasonTeam: true, showGameDate: false, showAverages: true } : game;
@@ -481,5 +819,7 @@ function buildState(game: GameRecord, pool: PoolPlayer[], picks: PickRecord[], c
       game.status === 'revealed' && game.winner && game.scoreA !== null && game.scoreB !== null
         ? { winner: game.winner, score: { A: game.scoreA, B: game.scoreB } }
         : null,
+    online: game.mode === 'online' ? onlineView(game, seats, viewer, now) : null,
+    serverNow: now.toISOString(),
   };
 }

@@ -1,10 +1,64 @@
 import { type ChangeEvent, useState } from 'react';
-import { DEFAULT_SETTINGS, LIMITS, api, type GameMode, type GameSettings } from '../api';
+import { DEFAULT_SETTINGS, LIMITS, PICK_CLOCKS, api, savedName, type GameMode, type GameSettings } from '../api';
 
 const MODES: { value: GameMode; title: string; blurb: string }[] = [
   { value: 'vs_cpu', title: 'Solo vs CPU', blurb: 'A coin flip decides who picks first. The CPU drafts the best available player — mostly.' },
-  { value: 'pass_and_play', title: '2-Player', blurb: 'Pass-and-play on one screen. A coin flip decides who picks first.' },
+  { value: 'online', title: 'Online with a friend', blurb: 'Each on your own device. Create a game and send your friend the link.' },
+  { value: 'pass_and_play', title: 'Pass-and-play', blurb: 'Two players on one screen. A coin flip decides who picks first.' },
 ];
+
+const clockLabel = (s: number | null) => (s === null ? 'Off' : `${s}s`);
+
+/** Join a friend's online game by code (an invite link fills the code in). */
+function JoinGame({ invite, onJoined }: { invite?: string; onJoined: (gameId: number) => void }) {
+  const [code, setCode] = useState(invite ?? '');
+  const [name, setName] = useState(savedName);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function join(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const g = await api.join(code, name);
+      onJoined(g.gameId);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className={`panel join-game ${invite ? 'invited' : ''}`} onSubmit={join}>
+      <h2>{invite ? `You're invited to game ${invite}` : 'Join a friend’s game'}</h2>
+      <div className="join-fields">
+        {!invite && (
+          <label className="setting">
+            <span className="setting-label">Room code</span>
+            <input
+              className="code-input"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              placeholder="KX7P"
+              maxLength={6}
+              autoCapitalize="characters"
+              autoComplete="off"
+            />
+          </label>
+        )}
+        <label className="setting">
+          <span className="setting-label">Your name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} placeholder="Name" autoFocus={!!invite} />
+        </label>
+        <button className="btn btn-primary" disabled={busy || !code.trim() || !name.trim()}>
+          {busy ? 'Joining…' : 'Join game'}
+        </button>
+      </div>
+      {error && <p className="error">{error}</p>}
+    </form>
+  );
+}
 
 const VISIBILITY: { key: 'showSeasonTeam' | 'showGameDate' | 'showAverages'; label: string; hint: string }[] = [
   { key: 'showSeasonTeam', label: 'Season & team', hint: 'e.g. 1986-87 · CHI. Off: just the name.' },
@@ -36,9 +90,11 @@ function settingsSummary(s: GameSettings): string {
     .join(' · ');
 }
 
-export default function Home({ onStart }: { onStart: (gameId: number) => void }) {
+export default function Home({ onStart, invite }: { onStart: (gameId: number) => void; invite?: string }) {
   const [mode, setMode] = useState<GameMode>('vs_cpu');
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
+  const [name, setName] = useState(savedName);
+  const [pickSeconds, setPickSeconds] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,17 +110,30 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
   const setNumber = (key: 'poolSize' | 'rosterSize') => (e: ChangeEvent<HTMLInputElement>) =>
     setSettings((s) => ({ ...s, [key]: e.target.value === '' ? NaN : Number(e.target.value) }));
 
+  const online = mode === 'online';
+  const blocked = !!settingsError || (online && !name.trim());
+
   async function start() {
-    if (settingsError) return;
+    if (blocked) return;
     setBusy(true);
     setError(null);
     try {
-      const game = await api.createGame(mode, settings);
-      onStart(game.id);
+      const id = online
+        ? (await api.createOnline(name, settings, pickSeconds)).gameId
+        : (await api.createGame(mode as Exclude<GameMode, 'online'>, settings)).id;
+      onStart(id);
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
     }
+  }
+
+  if (invite) {
+    return (
+      <div className="home">
+        <JoinGame invite={invite} onJoined={onStart} />
+      </div>
+    );
   }
 
   return (
@@ -91,6 +160,32 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
           </button>
         ))}
       </section>
+
+      {online && (
+        <section className="panel online-setup" aria-label="Online game">
+          <label className="setting">
+            <span className="setting-label">Your name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} placeholder="Name" />
+          </label>
+          <div className="setting">
+            <span className="setting-label">Pick clock</span>
+            <div className="segmented" role="radiogroup" aria-label="Pick clock">
+              {PICK_CLOCKS.map((c) => (
+                <button
+                  key={String(c)}
+                  role="radio"
+                  aria-checked={pickSeconds === c}
+                  className={pickSeconds === c ? 'active' : ''}
+                  onClick={() => setPickSeconds(c)}
+                >
+                  {clockLabel(c)}
+                </button>
+              ))}
+            </div>
+            <span className="setting-hint">When time runs out, the best available player is picked for you.</span>
+          </div>
+        </section>
+      )}
 
       <details
         className="settings-details"
@@ -158,10 +253,12 @@ export default function Home({ onStart }: { onStart: (gameId: number) => void })
       </section>
       </details>
 
-      <button className="btn btn-primary btn-lg" onClick={start} disabled={busy || !!settingsError}>
-        {busy ? 'Choosing games…' : 'Start Game'}
+      <button className="btn btn-primary btn-lg" onClick={start} disabled={busy || blocked}>
+        {busy ? 'Choosing games…' : online ? 'Create game' : 'Start Game'}
       </button>
       {(settingsError || error) && <p className="error">{settingsError ?? error}</p>}
+
+      <JoinGame onJoined={onStart} />
 
       <section className="rules">
         <h2>How it works</h2>

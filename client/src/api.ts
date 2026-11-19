@@ -1,8 +1,9 @@
 // Types mirror the server DTOs in server/src/services/gameService.ts.
 
 export type Team = 'A' | 'B';
-export type GameMode = 'vs_cpu' | 'pass_and_play';
-export type GameStatus = 'drafting' | 'draft_complete' | 'revealed';
+export type GameMode = 'vs_cpu' | 'pass_and_play' | 'online';
+/** `lobby` is online-only: waiting for the friend to join and the host to start. */
+export type GameStatus = 'lobby' | 'drafting' | 'draft_complete' | 'revealed';
 export type Winner = Team | 'draw';
 
 export interface GameSettings {
@@ -82,6 +83,23 @@ export interface PickView {
   pickedAt: string;
 }
 
+/** Online games: the room, seats, and server timestamps both screens schedule from. */
+export interface OnlineView {
+  roomCode: string;
+  /** Your team, or null if you're just looking. */
+  you: Team | null;
+  seats: Record<Team, { name: string; connected: boolean } | null>;
+  pickSeconds: number | null;
+  flipAt: string | null;
+  turnStartedAt: string | null;
+  turnDeadline: string | null;
+  revealStartedAt: string | null;
+  rematchGameId: number | null;
+  expired: boolean;
+}
+
+export const PICK_CLOCKS = [null, 30, 60, 90] as const;
+
 export interface GameState {
   id: number;
   mode: GameMode;
@@ -99,6 +117,15 @@ export interface GameState {
   available: PlayerView[];
   picks: PickView[];
   result: { winner: Winner; score: { A: number; B: number } } | null;
+  online: OnlineView | null;
+  serverNow: string;
+}
+
+export interface SeatGrant {
+  gameId: number;
+  token: string;
+  team: Team;
+  state: GameState;
 }
 
 export interface PickResponse {
@@ -192,12 +219,78 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+// ------------------------------------------------------------ online seat tokens
+
+// Your seat in an online game is a random token from the server. It's kept per tab (so two
+// tabs in one browser can be two players, handy for testing) and per browser (so reopening
+// the link later still finds your seat). The tab's copy wins.
+const tokenKey = (gameId: number) => `fp-token-${gameId}`;
+
+export function getToken(gameId: number): string | undefined {
+  for (const store of [() => sessionStorage, () => localStorage]) {
+    try {
+      const t = store().getItem(tokenKey(gameId));
+      if (t) return t;
+    } catch {
+      // Storage blocked: try the next one.
+    }
+  }
+  return undefined;
+}
+
+function setToken(gameId: number, token: string) {
+  for (const store of [() => sessionStorage, () => localStorage]) {
+    try {
+      store().setItem(tokenKey(gameId), token);
+    } catch {
+      // Private mode etc.: the in-memory copy below keeps the seat until the tab closes.
+    }
+  }
+  memoryTokens.set(gameId, token);
+}
+const memoryTokens = new Map<number, string>();
+const tokenFor = (gameId: number) => memoryTokens.get(gameId) ?? getToken(gameId);
+
+const NAME_KEY = 'fp-name';
+export function savedName(): string {
+  try {
+    return localStorage.getItem(NAME_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+function saveName(name: string) {
+  try {
+    localStorage.setItem(NAME_KEY, name.trim());
+  } catch {
+    // Not remembered.
+  }
+}
+
+// ------------------------------------------------------------ server clock
+
+// Online timings (coin flip, pick clock, reveal) are server timestamps. Each response carries
+// the server's time, so we can convert them to this browser's clock.
+let clockOffset = 0;
+function syncClock(serverNow: string, sentAt: number) {
+  const roundTrip = Date.now() - sentAt;
+  clockOffset = Date.parse(serverNow) + roundTrip / 2 - Date.now();
+}
+/** A server timestamp in this browser's Date.now() terms. */
+export const localTime = (iso: string) => Date.parse(iso) - clockOffset;
+
+// ------------------------------------------------------------ requests
+
+async function request<T>(method: string, path: string, body?: unknown, token?: string): Promise<T> {
   let res: Response;
+  const sentAt = Date.now();
   try {
     res = await fetch(`/api${path}`, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { 'X-Player-Token': token } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -207,13 +300,39 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!res.ok) {
     throw new ApiError(res.status, data?.error?.code ?? 'UNKNOWN', data?.error?.message ?? res.statusText);
   }
+  const serverNow = (data as { serverNow?: string; state?: { serverNow?: string } })?.serverNow ?? data?.state?.serverNow;
+  if (serverNow) syncClock(serverNow, sentAt);
   return data as T;
 }
 
+async function seat(path: string, body: unknown, name: string): Promise<SeatGrant> {
+  const grant = await request<SeatGrant>('POST', path, body);
+  setToken(grant.gameId, grant.token);
+  saveName(name);
+  return grant;
+}
+
 export const api = {
-  createGame: (mode: GameMode, settings: GameSettings) => request<GameState>('POST', '/games', { mode, ...settings }),
-  getGame: (id: number) => request<GameState>('GET', `/games/${id}`),
+  createGame: (mode: Exclude<GameMode, 'online'>, settings: GameSettings) =>
+    request<GameState>('POST', '/games', { mode, ...settings }),
+  createOnline: (name: string, settings: GameSettings, pickSeconds: number | null) =>
+    seat('/online/games', { name, pickSeconds, ...settings }, name),
+  join: (code: string, name: string) => seat('/online/join', { code, name }, name),
+  getGame: (id: number) => request<GameState>('GET', `/games/${id}`, undefined, tokenFor(id)),
+  start: (id: number) => request<GameState>('POST', `/games/${id}/start`, undefined, tokenFor(id)),
   pick: (id: number, playerSeasonId: number, team: Team) =>
-    request<PickResponse>('POST', `/games/${id}/picks`, { playerSeasonId, team }),
+    request<PickResponse>('POST', `/games/${id}/picks`, { playerSeasonId, team }, tokenFor(id)),
   reveal: (id: number) => request<RevealResult>('POST', `/games/${id}/reveal`),
+  /** Same players, same settings. Your seat token carries over to the new game. */
+  rematch: async (id: number) => {
+    const r = await request<{ gameId: number }>('POST', `/games/${id}/rematch`, undefined, tokenFor(id));
+    adoptRematch(id, r.gameId);
+    return r;
+  },
 };
+
+/** The rematch uses the same seat token as the game before it. */
+export function adoptRematch(fromGameId: number, toGameId: number) {
+  const t = tokenFor(fromGameId);
+  if (t) setToken(toGameId, t);
+}

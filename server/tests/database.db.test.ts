@@ -81,6 +81,39 @@ describe('database invariants', () => {
     await expect(prisma.game.update({ where: { id }, data: { firstTeam: other } })).rejects.toThrow(/fixed once picks/);
   });
 
+  it('online: seats, a unique room code, and no picks in the lobby', async () => {
+    const host = await service.createOnlineGame('Ricky', {}, 30);
+    createdGameIds.push(host.gameId);
+    const row = await prisma.game.findUniqueOrThrow({ where: { id: host.gameId }, include: { seats: true } });
+    expect(row).toMatchObject({ mode: 'online', status: 'lobby', pickSeconds: 30 });
+    expect(row.seats).toEqual([expect.objectContaining({ team: 'A', name: 'Ricky' })]);
+    // The DB refuses picks before the game starts...
+    await expect(
+      prisma.draftPick.create({
+        data: { gameId: host.gameId, pickNumber: 1, team: 'A', playerSeasonId: host.state.available[0].id },
+      }),
+    ).rejects.toThrow(/not drafting/);
+    // ...a second seat for the same team...
+    await expect(
+      prisma.gameSeat.create({ data: { gameId: host.gameId, team: 'A', name: 'X', tokenHash: 'x' } }),
+    ).rejects.toThrow();
+    // ...and a room code that's taken.
+    await expect(
+      prisma.game.create({
+        data: { mode: 'online', poolSize: 10, rosterSize: 5, uniquePlayers: true, roomCode: row.roomCode },
+      }),
+    ).rejects.toThrow();
+    // Local games can't have a room code or sit in the lobby.
+    await expect(
+      prisma.game.create({ data: { mode: 'vs_cpu', poolSize: 10, rosterSize: 5, uniquePlayers: true, status: 'lobby' } }),
+    ).rejects.toThrow();
+
+    const guest = await service.joinGame(row.roomCode!, 'Sam');
+    const started = await service.startGame(host.gameId, host.token);
+    expect(started.online!.seats.B).toMatchObject({ name: 'Sam' });
+    expect(guest.team).toBe('B');
+  });
+
   it('trigger blocks changing a locked game', async () => {
     const { id } = await newGame();
     const row = await prisma.gamePlayer.findFirstOrThrow({ where: { gameId: id } });

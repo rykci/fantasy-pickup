@@ -1,6 +1,7 @@
 export type Team = 'A' | 'B';
-export type GameMode = 'vs_cpu' | 'pass_and_play';
-export type GameStatus = 'drafting' | 'draft_complete' | 'revealed';
+export type GameMode = 'vs_cpu' | 'pass_and_play' | 'online';
+/** `lobby` is online-only: waiting for the second player and the host's Start. */
+export type GameStatus = 'lobby' | 'drafting' | 'draft_complete' | 'revealed';
 export type Winner = Team | 'draw';
 
 /** Returns a float in [0, 1). Injected so randomness is testable. */

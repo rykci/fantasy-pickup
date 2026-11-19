@@ -27,11 +27,15 @@ datasource db {
 enum GameMode {
   vs_cpu
   pass_and_play
+  /// Two players on their own devices, joined by room code
+  online
 
   @@map("game_mode")
 }
 
 enum GameStatus {
+  /// Online only: waiting for the second player / the host to start
+  lobby
   drafting
   draft_complete
   revealed
@@ -159,8 +163,27 @@ model Game {
   createdAt     DateTime    @default(now()) @map("created_at")
   revealedAt    DateTime?   @map("revealed_at")
 
-  players GamePlayer[]
-  picks   DraftPick[]
+  // Online games only.
+  /// Short code friends join with, e.g. KX7P
+  roomCode        String?   @unique @map("room_code")
+  /// Pick clock in seconds; null = no clock
+  pickSeconds     Int?      @map("pick_seconds")
+  /// When the host pressed Start (the coin flip plays shortly after)
+  startedAt       DateTime? @map("started_at")
+  /// When the current turn's clock started
+  turnStartedAt   DateTime? @map("turn_started_at")
+  /// When both screens start the reveal
+  revealStartedAt DateTime? @map("reveal_started_at")
+  /// The rematch game, once someone asks for one
+  rematchGameId   Int?      @map("rematch_game_id")
+  /// Last join, start or pick: idle online games expire after 24 hours
+  lastActivityAt  DateTime  @default(now()) @map("last_activity_at")
+
+  players     GamePlayer[]
+  picks       DraftPick[]
+  seats       GameSeat[]
+  rematch     Game?        @relation("Rematch", fields: [rematchGameId], references: [id], onDelete: SetNull)
+  rematchedBy Game[]       @relation("Rematch")
 
   @@index([createdAt])
   @@map("games")
@@ -197,4 +220,20 @@ model DraftPick {
   @@unique([gameId, pickNumber])
   @@unique([gameId, playerSeasonId])
   @@map("draft_picks")
+}
+
+/// An online player's seat: Team A is the host, Team B the friend who joined.
+/// Players have no accounts: the browser holds a random token, and only its hash is stored.
+model GameSeat {
+  gameId     Int      @map("game_id")
+  team       TeamSide
+  name       String
+  tokenHash  String   @map("token_hash")
+  joinedAt   DateTime @default(now()) @map("joined_at")
+  lastSeenAt DateTime @default(now()) @map("last_seen_at")
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, team])
+  @@map("game_seats")
 }

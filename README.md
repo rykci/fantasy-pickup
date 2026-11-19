@@ -5,7 +5,10 @@ A one-off fantasy draft game. Two teams snake-draft from a random pool of real *
 is secretly locked to **one random real game** from that season. Season averages guide the draft, but only the
 locked games decide the result, scored head to head across **9 fantasy categories**.
 
-**Stack:** React + TypeScript + Vite · Node + TypeScript + Express + Prisma · PostgreSQL (Docker Compose) · Python ingestion
+Play **solo vs the CPU**, **pass-and-play** on one screen, or **online with a friend** on your own devices.
+
+**Stack:** React + TypeScript + Vite · Node + TypeScript + Express + Prisma · PostgreSQL (Docker Compose locally,
+Neon when hosted) · Python ingestion · hosted on Vercel (see [Deploying](#deploying-vercel--neon))
 
 ---
 
@@ -46,15 +49,16 @@ Open **http://localhost:5173**.
 
 ```bash
 cd server
-npm test           # 82 unit tests — no database needed
-npm run test:db    # 13 integration tests against the docker Postgres (needs migrate + ingest)
+npm test           # 97 unit tests — no database needed
+npm run test:db    # 14 integration tests against the docker Postgres (needs migrate + ingest)
 ```
 
 ---
 
 ## How to play a full game
 
-1. **Home** — choose **Solo vs CPU** or **2-Player**, optionally open **Game settings** (collapsed by default;
+1. **Home** — choose **Solo vs CPU**, **Online with a friend** (see [Online play](#online-play)) or
+   **Pass-and-play**, optionally open **Game settings** (collapsed by default;
    its summary line shows the current choices), then **Start Game**:
 
    | Setting | Default | Range |
@@ -107,6 +111,34 @@ npm run test:db    # 13 integration tests against the docker Postgres (needs mig
 
 The URL tracks the game (`?game=12`), so refreshing mid-draft keeps your place.
 
+### Online play
+
+1. **Create:** pick **Online with a friend**, enter your name, choose a **pick clock** (off, 30, 60 or 90 seconds)
+   and any settings, then **Create game**. You get a **room code** (e.g. `KX7P`) and an invite link
+   (`/?join=KX7P`) to send.
+2. **Join:** your friend opens the link (or types the code under **Join a friend's game**) and enters a name.
+   Both players show up in the lobby with a green dot while connected.
+3. **Start:** the host presses **Start the game**. The coin flip plays on both screens at the same moment, then the
+   draft opens. You can only pick on your turn; the other player's picks appear within about a second, with a
+   note ("Sam drafted 1996-97 Gary Payton").
+4. **Pick clock:** when it runs out, the best available player is picked for you (the CPU's logic). If someone
+   leaves, the game waits for them; with a clock on, their picks keep being made automatically.
+5. **Reveal:** when the last pick is in, both players go to the results and the reveal starts at the same moment
+   on both screens (joining late picks up where it is). The headline is from your side: "You win!" or "Sam wins".
+6. **Rematch:** either player can start one: same players and settings, a new pool and a new coin flip. The other
+   player gets a **Join the rematch →** button; the host starts it as usual.
+
+How it works:
+- **No accounts.** Creating or joining gives your browser a random seat token (kept per tab and per browser, so
+  reopening the link puts you back in your seat). The server stores only its SHA-256 hash, and every pick checks
+  that the token holds the team on the clock. Switching devices mid-game isn't supported.
+- **No always-on server.** On Vercel the API runs as short-lived functions, so there are no WebSockets: each player's
+  browser asks for the game state about once a second (every 4 s while the tab is hidden). The pick clock is
+  enforced whenever anyone asks: every overdue turn is filled in, each new clock starting at the previous deadline.
+- **Synced moments.** The server stores timestamps (coin flip, first turn, reveal start) and every response carries
+  the server's time, so each browser schedules them on its own clock and both screens line up.
+- **Expiry.** Lobby or drafting games with no join, start or pick for 24 hours expire.
+
 ### Scoring rules (9-cat)
 
 | Category | Team value | Winner |
@@ -135,8 +167,12 @@ All JSON. The draft rules are enforced on the server, so the UI cannot bypass th
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 15, "rosterSize"?: 5, "uniquePlayers"?: true, "showSeasonTeam"?: false, "showGameDate"?: false, "showAverages"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
-| `GET` | `/api/games/:id` | — | Status, settings, `firstTeam` (the coin-flip winner), current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
-| `POST` | `/api/games/:id/picks` | `{ "playerSeasonId": 1234, "team"?: "A" \| "B" }` | Validates the turn, that the player-season is available and in the pool, and that the draft isn't finished. In `vs_cpu`, `team` defaults to `A` and the CPU's picks are returned in `autoPicks`. |
+| `GET` | `/api/games/:id` | — | `serverNow`; for online games `online` (room code, `you`, seats with names and connected flags, pick clock, `flipAt`, `turnStartedAt`, `turnDeadline`, `revealStartedAt`, `rematchGameId`, `expired`). Status, settings, `firstTeam` (the coin-flip winner), current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
+| `POST` | `/api/games/:id/picks` | `{ "playerSeasonId": 1234, "team"?: "A" \| "B" }` | Validates the turn, that the player-season is available and in the pool, and that the draft isn't finished. In `vs_cpu`, `team` defaults to `A` and the CPU's picks are returned in `autoPicks`. Online: needs your token, and only works on your turn. |
+| `POST` | `/api/online/games` | `{ "name": "Ricky", "pickSeconds"?: 30 \| 60 \| 90 \| null, …settings }` | Creates an online game in the lobby. Returns `{ gameId, token, team: "A", state }`: keep the token, it's your seat. |
+| `POST` | `/api/online/join` | `{ "code": "KX7P", "name": "Sam" }` | Takes Team B. `404` unknown code, `409` full or already started, `410` expired. Returns `{ gameId, token, team: "B", state }`. |
+| `POST` | `/api/games/:id/start` | — (host's token) | Host only, once Team B has joined. Schedules the coin flip and the first turn. |
+| `POST` | `/api/games/:id/rematch` | — (a player's token) | After an online game: same players and settings, new pool and flip. Idempotent. Returns `{ gameId }`. |
 | `POST` | `/api/games/:id/reveal` | — | `409` until the last pick. Returns locked lines, team totals, category winners, score, winner, `decidedBy`, and `undrafted` (every pool player nobody picked, with their locked game). Idempotent. |
 
 Errors look like `{ "error": { "code": "NOT_YOUR_TURN", "message": "..." } }`.
@@ -165,12 +201,15 @@ players ──< player_seasons ──< game_logs           (one row per complete
 | `players` | `id`, `name` (unique; see identity notes below) |
 | `player_seasons` | `id`, `player_id`, `season` ("1986-87"), `team`, `games_played`, per-game `minutes pts reb ast stl blk fg3m fgm fga ftm fta tov`, `value`, `season_rank` · unique `(player_id, season)` |
 | `game_logs` | `id`, `player_season_id`, `game_id`, `game_date`, `team`, `opponent`, `is_home`, `minutes`, the 11 box-score stats · unique `(player_season_id, game_id)` |
-| `games` | `id`, `mode`, `status` (`drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `show_season_team`, `show_game_date`, `show_averages`, `first_team` (coin flip), `winner`, `score_a`, `score_b`, timestamps |
+| `games` | `id`, `mode` (`vs_cpu`, `pass_and_play`, `online`), `status` (`lobby` (online only) → `drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `show_season_team`, `show_game_date`, `show_averages`, `first_team` (coin flip), `winner`, `score_a`, `score_b`, timestamps · online: `room_code` (unique), `pick_seconds`, `started_at`, `turn_started_at`, `reveal_started_at`, `rematch_game_id`, `last_activity_at` |
+| `game_seats` | PK `(game_id, team)`, `name` (1–20 chars), `token_hash` (SHA-256 of the seat token), `joined_at`, `last_seen_at` |
 | `game_players` | PK `(game_id, player_season_id)`, `locked_game_log_id` |
 | `draft_picks` | `id`, `game_id`, `team`, `pick_number`, `player_season_id`, `picked_at` · unique `(game_id, pick_number)` and `(game_id, player_season_id)` |
 
 Integrity is enforced in Postgres as well as in the app (`server/prisma/migrations/*/migration.sql`):
 
+- **Online games:** only online games have a room code and use the lobby (`CHECK`), one seat per team (PK), and
+  picks are only accepted while the game is `drafting` (pick trigger).
 - **Locked games can't change.** A `BEFORE UPDATE` trigger on `game_players` rejects any change to
   `locked_game_log_id`. A second trigger rejects edits to a `game_logs` row once it's locked into any game.
 - **A locked log belongs to its player-season.** Composite FK `(locked_game_log_id, player_season_id) → game_logs(id, player_season_id)`.
@@ -240,13 +279,41 @@ data. They are unused by v1.1 and kept as a starting point for filling 2023-25.
 
 ---
 
-## Scope (v1.2)
+## Deploying (Vercel + Neon)
 
-No auth, accounts, online multiplayer, trades or bench.
+The free demo setup: Vercel serves the React app and runs the Express API as a Vercel Function
+(`api/index.js` → `server/src/vercel.ts`); the database is Postgres on Neon's free tier (0.5 GB; the data is
+~126 MB). `vercel.json` holds the install, build and routing settings. Every push to `main` redeploys.
+
+1. **Neon:** create a project at [neon.tech](https://neon.tech) (Postgres 16 or 17). From **Connect**, copy two
+   connection strings: the **pooled** one (host contains `-pooler`) and the **direct** one (untick
+   "Connection pooling").
+2. **Load the data** (once, from this machine, with the local Docker database running):
+   ```bash
+   NEON_DIRECT_URL='postgresql://…direct…' ./scripts/load-neon.sh
+   ```
+   It creates the tables (`prisma migrate deploy`) and copies players, player-seasons and game logs. Later schema
+   changes: `cd server && DATABASE_URL='…direct…' npx prisma migrate deploy`.
+3. **Vercel:** **Add New → Project**, import the GitHub repo, keep the root directory, and add one environment
+   variable before deploying:
+   - `DATABASE_URL` = the **pooled** Neon string with `&pgbouncer=true&connect_timeout=15` added to the end.
+
+   Deploy. The site is at `https://<project>.vercel.app`; `/api/health` should return `{"ok":true}`.
+
+Free-tier notes: Neon pauses the database when idle, so the first request after a quiet spell takes about a second
+longer. Vercel's Hobby plan is for non-commercial use, which suits a demo with friends.
+
+---
+
+## Scope (v1.3)
+
+No accounts, matchmaking with strangers, spectators, chat, trades or bench.
 
 The UI calls each player-season's secret game its **chosen game**; the code and schema call it the *locked* game.
 
 **v1.2:** the box-score reveal (pick by pick, stat by stat), sound, and share as image / text.
-**Next:** online multiplayer (rooms, real-time draft, the reveal played in sync on both screens; needs hosting), then
-share links.
+**v1.3:** online with a friend (room codes and invite links, pick clock, synced coin flip and reveal, rematch),
+hosted on Vercel + Neon.
+**Before a public launch:** hosting for real load (a WebSocket server or a push service instead of polling, a paid
+database), more players, matchmaking, accounts.
 **Later:** draft signposts / category badges, tiered pool sampling, a "Legends" mode, era filters, UI polish.
