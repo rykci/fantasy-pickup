@@ -1,3 +1,4 @@
+import { heat, shotHeat, type Heat } from './heat';
 import { formatDate, formatPct, type CategoryResult, type RevealResult, type RevealedPlayer, type Team } from '../api';
 
 const TEAMS: Team[] = ['A', 'B'];
@@ -46,20 +47,37 @@ const C = {
   muted: '#8b96a5',
   A: '#f28c28',
   B: '#3fb6d9',
+  hot: '#4cc38a',
+  cold: '#ef6b6b',
 };
 const FONT = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const W = 1120;
 const ROW = 34;
-const STAT_COLS: { label: string; get: (p: RevealedPlayer) => string }[] = [
-  { label: 'PTS', get: (p) => String(p.lockedGame.pts) },
-  { label: 'REB', get: (p) => String(p.lockedGame.reb) },
-  { label: 'AST', get: (p) => String(p.lockedGame.ast) },
-  { label: 'STL', get: (p) => String(p.lockedGame.stl) },
-  { label: 'BLK', get: (p) => String(p.lockedGame.blk) },
-  { label: '3PM', get: (p) => String(p.lockedGame.fg3m) },
-  { label: 'FG', get: (p) => `${p.lockedGame.fgm}-${p.lockedGame.fga}` },
-  { label: 'FT', get: (p) => `${p.lockedGame.ftm}-${p.lockedGame.fta}` },
-  { label: 'TO', get: (p) => String(p.lockedGame.tov) },
+type Counting = 'pts' | 'reb' | 'ast' | 'stl' | 'blk' | 'fg3m' | 'tov';
+const counting = (label: string, k: Counting) => ({
+  label,
+  get: (p: RevealedPlayer) => String(p.lockedGame[k]),
+  heat: (p: RevealedPlayer) => heat(p.lockedGame[k], p.averages[k], k === 'tov'),
+});
+/** Each column's text and its green/red color, same rules as the results page. */
+const STAT_COLS: { label: string; get: (p: RevealedPlayer) => string; heat: (p: RevealedPlayer) => Heat }[] = [
+  counting('PTS', 'pts'),
+  counting('REB', 'reb'),
+  counting('AST', 'ast'),
+  counting('STL', 'stl'),
+  counting('BLK', 'blk'),
+  counting('3PM', 'fg3m'),
+  {
+    label: 'FG',
+    get: (p) => `${p.lockedGame.fgm}-${p.lockedGame.fga}`,
+    heat: (p) => shotHeat(p.lockedGame.fgm, p.lockedGame.fga, p.averages.fgPct),
+  },
+  {
+    label: 'FT',
+    get: (p) => `${p.lockedGame.ftm}-${p.lockedGame.fta}`,
+    heat: (p) => shotHeat(p.lockedGame.ftm, p.lockedGame.fta, p.averages.ftPct),
+  },
+  counting('TO', 'tov'),
 ];
 const STAT_X = 590;
 const STAT_W = 54;
@@ -177,9 +195,13 @@ export async function downloadImage(r: RevealResult): Promise<void> {
       g.fillText(`${p.season} ${p.team}`, 225, mid);
       g.fillText(fit(g, `${formatDate(gm.gameDate)} ${gm.isHome ? 'vs' : '@'} ${gm.opponent}`, 230), 340, mid);
       g.textAlign = 'right';
-      g.fillStyle = C.text;
-      g.font = `500 15px ${FONT}`;
-      STAT_COLS.forEach((s, i) => g.fillText(s.get(p), STAT_X + STAT_W * (i + 1), mid));
+      STAT_COLS.forEach((s, i) => {
+        // Green = well above their season, red = well below (bold green like the page).
+        const h = s.heat(p);
+        g.fillStyle = h === 'hot' ? C.hot : h === 'cold' ? C.cold : C.text;
+        g.font = `${h === 'hot' ? 700 : 500} 15px ${FONT}`;
+        g.fillText(s.get(p), STAT_X + STAT_W * (i + 1), mid);
+      });
       y += ROW;
     }
     const tot = team.totals;

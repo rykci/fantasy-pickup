@@ -14,6 +14,7 @@ import {
   type StatLine,
   type Team,
 } from '../api';
+import { heat, shotHeat } from '../lib/heat';
 import { downloadImage, headline as headlineFor, shareText } from '../lib/share';
 import { addTo, emptyTotals, scoreCategories } from '../lib/score';
 import { sound, useMuted, type Outcome } from '../lib/sound';
@@ -133,14 +134,6 @@ function outcomeFor(r: RevealResult, you: Team | null): Outcome {
   return r.mode === 'vs_cpu' && r.winner === 'B' ? 'lose' : 'win';
 }
 
-/** Green = well above the season average, red = well below (reversed for TO). */
-function heat(v: number, avg: number, lowerIsBetter = false): string {
-  const hot = v >= avg * 1.25 + 0.5;
-  const cold = v <= avg * 0.6 - 0.5;
-  if (lowerIsBetter) return cold ? 'hot' : hot ? 'cold' : '';
-  return hot ? 'hot' : cold ? 'cold' : '';
-}
-
 function catText(c: CategoryResult, side: Team): string {
   const v = c[side];
   if (c.key === 'fgPct' || c.key === 'ftPct') return formatPct(v);
@@ -169,9 +162,7 @@ const FULL: RowState = { rolling: false, landed: true, shown: STAT_COUNT };
 function ShotCell({ made, att, avgPct, shown }: { made: number; att: number; avgPct: number | null; shown: boolean }) {
   if (!shown) return <td className="num blank">·</td>;
   const p = att > 0 ? made / att : null;
-  // Only colour shooting nights with real volume.
-  const cls =
-    p === null || avgPct === null || att < 5 ? '' : p >= avgPct + 0.12 ? 'hot' : p <= avgPct - 0.15 ? 'cold' : '';
+  const cls = shotHeat(made, att, avgPct);
   return (
     <td className={`num stat-in ${cls}`} title={`${formatPct(p)} (season ${formatPct(avgPct)})`}>
       {made}-{att}
