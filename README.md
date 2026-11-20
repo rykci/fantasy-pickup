@@ -242,11 +242,28 @@ tests/           unit tests (in-memory repository) + *.db.test.ts integration te
 
 ## Data
 
-**Source:** the Kaggle dataset
-[NBA Player Box Score Data](https://www.kaggle.com/datasets/loganlauton/nba-player-box-score-data) by loganlauton
-(scraped from stats.nba.com with `nba_api`): one row per player per regular-season game, Oct 1946 – **Apr 5, 2023**.
-Download it and put `NBA Player Box Score Stats(1950 - 2022).csv` at the repo root (or pass `--csv`). It's ~160 MB,
-so it isn't checked in.
+Seasons **1983-84 to 2025-26**, from two sources:
+
+- **Up to Apr 5, 2023:** the Kaggle dataset
+  [NBA Player Box Score Data](https://www.kaggle.com/datasets/loganlauton/nba-player-box-score-data) by loganlauton
+  (scraped from stats.nba.com with `nba_api`): one row per player per regular-season game, Oct 1946 – Apr 5, 2023.
+  Download it and put `NBA Player Box Score Stats(1950 - 2022).csv` at the repo root (or pass `--csv`). It's
+  ~160 MB, so it isn't checked in.
+- **After that:** ESPN's public API, via `ingestion/espn_fetch.py` (stdlib only, ~35 min the first time). For each
+  day it reads the scoreboard, then each regular-season game's box score, at 2 requests a second. Box scores are
+  cached in `ingestion/data/` (git-ignored), so re-runs resume. It writes `ingestion/data/espn_box_scores.csv`,
+  which `ingest.py` reads automatically.
+  - Regular season = ESPN season type 2 and game type `STD`: no All-Star game, no NBA Cup final (it doesn't count in
+    regular-season stats), no play-in. Cup group games, quarterfinals and semifinals count, as in the NBA's stats.
+  - stats.nba.com itself doesn't respond from many home networks, which is why ESPN is used for the newer seasons.
+  - ESPN players are matched to the existing players by name, ignoring accents, punctuation and Jr./III, preferring
+    an exact match (so KJ Martin doesn't merge with his father). Nicknames are in `ESPN_ALIASES` in `ingest.py`; the
+    script lists ESPN players it couldn't match so new aliases are easy to spot.
+
+```bash
+python3 ingestion/espn_fetch.py            # 2022-23 (from Apr 6, 2023) to 2025-26; --seasons 2026 for a later one
+python ingestion/ingest.py                  # Kaggle + ESPN into the local database
+```
 
 `ingestion/ingest.py` (stdlib + `psycopg2`, ~30 s):
 
@@ -270,8 +287,10 @@ official numbers).
 
 ### Known limitations
 
-- **No 2023-24 or 2024-25**, and the last 4 days of 2022-23 are missing (the source ends 2023-04-05). Filling the gap
-  is a separate task.
+- **2026-27 isn't loaded** while it's in progress (partial-season averages and ranks would keep moving). Once it
+  ends: `python3 ingestion/espn_fetch.py --seasons 2026`, re-run `ingest.py`, and raise `SEASONS.last` in
+  `server/src/domain/draft.ts` and `client/src/api.ts`.
+- ESPN's API is unofficial: it could change without notice. The cache keeps what's already been fetched.
 - **Player identity is by name** (the source has no player ids):
   - Different players with the same name *in the same season* are split by team: "Eddie Johnson (KCK)" vs
     "Eddie Johnson (ATL)". Rows that still collide (two Charles Joneses on WAS, 1988-89) are dropped.
@@ -280,8 +299,8 @@ official numbers).
 - A traded player's team in a game is the team they played for in their chosen game. (`player_seasons.team` stores
   the team of their last game that season, but the app doesn't show it.)
 
-`ingestion/tools/build_seed_from_espn.py`, `ingestion/players.csv` and `ingestion/seed/` are the v1 (2024-25, ESPN)
-data. They are unused by v1.1 and kept as a starting point for filling 2023-25.
+`ingestion/tools/build_seed_from_espn.py`, `ingestion/players.csv` and `ingestion/seed/` are the v1 (2024-25, 24
+players) data, unused since v1.1.
 
 ---
 
@@ -300,6 +319,11 @@ The free demo setup: Vercel serves the React app and runs the Express API as a V
    ```
    It creates the tables (`prisma migrate deploy`) and copies players, player-seasons and game logs. Later schema
    changes: `cd server && DATABASE_URL='…direct…' npx prisma migrate deploy`.
+   **Adding seasons later** (after `espn_fetch.py` and a local `ingest.py`): this writes only 2022-23 onward and never
+   changes or removes a game log, so games already played keep their chosen games:
+   ```bash
+   NEON_DIRECT_URL='postgresql://…direct…' ./scripts/add-seasons-neon.sh      # FROM_SEASON=2026 for just one season
+   ```
 3. **Vercel:** **Add New → Project**, import the GitHub repo, keep the root directory, and add one environment
    variable before deploying:
    - `DATABASE_URL` = the **pooled** Neon string with `&pgbouncer=true&connect_timeout=15` added to the end.
@@ -321,7 +345,7 @@ The UI calls each player-season's secret game its **chosen game**; the code and 
 **v1.3:** online with a friend (room codes and invite links, pick clock, synced coin flip and reveal, rematch),
 hosted on Vercel + Neon.
 **v1.4:** season range setting, rematch by invitation (accept / decline, starts straight away), illustrated
-"How it works".
+"How it works" (also in the lobby for invited friends), seasons through 2025-26 from ESPN.
 **Before a public launch:** hosting for real load (a WebSocket server or a push service instead of polling, a paid
 database), more players, matchmaking, accounts.
 **Later:** draft signposts / category badges, tiered pool sampling, a "Legends" mode, UI polish.

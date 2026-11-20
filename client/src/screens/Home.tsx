@@ -164,7 +164,7 @@ export default function Home({ onStart, invite }: { onStart: (gameId: number) =>
       <section className="hero">
         <h1>Draft a team. Play one night.</h1>
         <p className="lede">
-          A snake draft from a random pool of real player-seasons from 1983-84 to 2022-23. Every player-season already
+          A snake draft from a random pool of real player-seasons from 1983-84 to 2025-26. Every player-season already
           has one random real game from that season chosen — you just don't know which one until the draft ends.
         </p>
       </section>

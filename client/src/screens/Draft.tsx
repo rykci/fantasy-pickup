@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, localTime, seasonRange, type GameState, type PickView, type PlayerView, type Team } from '../api';
 import CoinFlip from '../components/CoinFlip';
+import HowItWorks from '../components/HowItWorks';
 import DraftOrder from '../components/DraftOrder';
 import PlayerTable from '../components/PlayerTable';
 import Roster from '../components/Roster';
@@ -460,6 +461,8 @@ function Lobby({ state, onStarted, onHome }: { state: GameState; onStarted: (s: 
         <p className="center muted">This game is for {host?.name} and a friend. Ask for an invite to play.</p>
       )}
       {error && <p className="error center">{error}</p>}
+      {/* Friends who joined by link skip the home page: show them the rules while they wait. */}
+      {o.you === 'B' && <HowItWorks className="lobby-rules" />}
     </div>
   );
 }

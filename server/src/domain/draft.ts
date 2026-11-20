@@ -7,15 +7,15 @@ export const DEFAULT_SETTINGS: GameSettings = {
   rosterSize: 5,
   uniquePlayers: true,
   fromSeason: 1983,
-  toSeason: 2022,
+  toSeason: 2025,
   showSeasonTeam: false,
   showGameDate: false,
   showAverages: false,
 };
 /** Mirrored by the games_settings_valid CHECK constraint. */
 export const LIMITS = { minRoster: 1, maxRoster: 13, maxPool: 200 } as const;
-/** The seasons in the data, by starting year: 1983-84 to 2022-23. */
-export const SEASONS = { first: 1983, last: 2022 } as const;
+/** The seasons in the data, by starting year: 1983-84 to 2025-26. */
+export const SEASONS = { first: 1983, last: 2025 } as const;
 
 /** 1995 → "1995-96". */
 export function seasonLabel(startYear: number): string {

@@ -13,3 +13,6 @@ coverage/
 *.csv
 !ingestion/**/*.csv
 archive/
+
+# ESPN box scores and their cache (re-create with ingestion/espn_fetch.py)
+ingestion/data/

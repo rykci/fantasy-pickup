@@ -5,10 +5,17 @@ Load historical NBA player box scores into Postgres (v1.1).
     python ingestion/ingest.py                         # default CSV at the repo root
     python ingestion/ingest.py --csv path/to/file.csv
     python ingestion/ingest.py --dry-run               # parse + rank, print a summary, no DB
+    python ingestion/ingest.py --write-from-season 2022 --database-url ...   # only write 2022-23 onward
 
-Source: the Kaggle dataset "NBA Player Box Score Stats (1950 - 2022)" by
-loganlauton (scraped from stats.nba.com with nba_api). One row per player per
-regular-season game, up to 2023-04-05. It has player names but no player ids.
+Sources:
+  * The Kaggle dataset "NBA Player Box Score Stats (1950 - 2022)" by
+    loganlauton (scraped from stats.nba.com with nba_api). One row per player
+    per regular-season game, up to 2023-04-05. It has player names but no ids.
+  * ESPN, for everything after that (ingestion/data/espn_box_scores.csv, made by
+    espn_fetch.py; used when present, --espn-csv to point elsewhere). ESPN
+    players are matched to Kaggle players by name (accents, punctuation and
+    Jr./III suffixes ignored, plus a few known nicknames in ESPN_ALIASES), so
+    e.g. LeBron James's 2023-24 joins his earlier seasons.
 
 What gets loaded:
   * Only regular-season games from --first-season (default 1983, i.e. 1983-84)
@@ -36,16 +43,30 @@ Requires the schema to exist already (run `npm run db:migrate` in /server first)
 import argparse
 import csv
 import os
+import re
 import statistics
 import sys
+import unicodedata
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 DEFAULT_CSV = REPO_ROOT / "NBA Player Box Score Stats(1950 - 2022).csv"
+DEFAULT_ESPN_CSV = HERE / "data" / "espn_box_scores.csv"
+
+# ESPN name -> the name stats.nba.com (the Kaggle CSV) uses, where they differ by more
+# than accents, punctuation or a suffix. Found by matching ESPN's 2022-23 players
+# against the Kaggle 2022-23 ones (see the "unmatched" report).
+ESPN_ALIASES = {
+    "KJ Martin": "Kenyon Martin Jr.",
+    "Nate Williams": "Jeenathan Williams",
+}
+# Only match ESPN players against Kaggle names seen this recently (an active player
+# in 2023+ played in the 2010s), so a rookie doesn't merge with a 1980s namesake.
+MATCH_SEASONS_FROM = 2012
 
 # Box-score columns we need (all must be present for a game to count).
 STAT_COLS = {
@@ -149,6 +170,86 @@ def read_rows(csv_path: Path, first_season: int):
     return rows, team_games, stats
 
 
+SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
+def name_key(name: str, keep_suffix: bool = True) -> str:
+    """'Nikola Jokić' / "D'Angelo Russell" -> comparable keys. Without the suffix,
+    'Jaren Jackson Jr.' and 'Jaren Jackson' compare equal (but so would a father and son)."""
+    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    n = re.sub(r"[.'’`]", "", n).replace("-", " ")
+    return " ".join(w for w in n.split() if keep_suffix or w not in SUFFIXES)
+
+
+def read_espn_rows(csv_path: Path, first_season: int, kaggle_rows: list, team_games: dict, stats: dict):
+    """
+    ESPN rows in the same shape as read_rows(). Skips any date the Kaggle CSV
+    already covers for that season, so a game is never counted twice.
+    Returns (rows, unmatched) where unmatched lists ESPN names that became new players.
+    """
+    kaggle_last = {}
+    exact = defaultdict(set)  # key with suffix
+    loose = defaultdict(set)  # key without suffix
+    for row in kaggle_rows:
+        kaggle_last[row[0]] = max(kaggle_last.get(row[0], row[4]), row[4])
+        if row[0] >= MATCH_SEASONS_FROM:
+            exact[name_key(row[1])].add(row[1])
+            loose[name_key(row[1], keep_suffix=False)].add(row[1])
+
+    raw = []
+    with csv_path.open(newline="") as f:
+        for r in csv.DictReader(f):
+            start = int(r["season_start"])
+            day = date.fromisoformat(r["game_date"])
+            if start < first_season or (start in kaggle_last and day <= kaggle_last[start]):
+                stats["espn_skipped_overlap"] += 1
+                continue
+            team_games[start][r["team"]].add(r["game_id"])
+            values = [int(r[k]) for k in STAT_KEYS]
+            if values[0] <= 0:
+                stats["dropped_zero_minutes"] += 1
+                continue
+            s = dict(zip(STAT_KEYS, values))
+            if not (s["fga"] >= s["fgm"] >= s["fg3m"] and s["fta"] >= s["ftm"]):
+                stats["dropped_inconsistent"] += 1
+                continue
+            raw.append((start, r, day, values))
+
+    # One display name per ESPN player: the Kaggle name when there's a clear match.
+    espn_names = {}
+    for _, r, _, _ in raw:
+        espn_names.setdefault(r["espn_player_id"], r["player_name"])
+    display = {}
+    unmatched = []
+    for pid, espn_name in espn_names.items():
+        target = ESPN_ALIASES.get(espn_name, espn_name)
+        # Exact (suffix and all) first; then ignoring suffixes, e.g. ESPN "Marcus Morris" vs "Marcus Morris Sr.".
+        found = exact.get(name_key(target)) or loose.get(name_key(target, keep_suffix=False), set())
+        if len(found) == 1:
+            display[pid] = next(iter(found))
+        else:
+            display[pid] = espn_name
+            if not found:
+                unmatched.append(espn_name)
+            else:
+                stats["espn_ambiguous_names"] += 1
+                print(f"  ! {espn_name}: several Kaggle players match ({', '.join(sorted(found))}); kept as is")
+
+    # Two different ESPN players with the same name in one season: add the team, as for Kaggle.
+    ids_by_name = defaultdict(set)
+    for start, r, _, _ in raw:
+        ids_by_name[(start, display[r["espn_player_id"]])].add(r["espn_player_id"])
+
+    rows = []
+    for start, r, day, values in raw:
+        name = display[r["espn_player_id"]]
+        if len(ids_by_name[(start, name)]) > 1:
+            name = f"{name} ({r['team']})"
+        rows.append((start, name, r["team"], r["game_id"], day, r["opponent"], r["is_home"] == "1", *values))
+    stats["espn_complete_rows"] = len(rows)
+    return rows, sorted(set(unmatched))
+
+
 def assign_identities(rows: list, stats: dict) -> list:
     """
     Same-name players in the same game -> split that season by team ("Name (TEAM)").
@@ -232,14 +333,19 @@ def build_player_seasons(rows: list, team_games: dict, min_games_pct: float, min
 
 # ------------------------------------------------------------------------- load
 
-def load_into_db(dsn: str, player_seasons: list) -> None:
+def load_into_db(dsn: str, player_seasons: list, from_season=None) -> None:
+    """from_season (a start year): only write those seasons onward; earlier ones are left as they are."""
     import psycopg2
     from psycopg2.extras import execute_values
 
     conn = psycopg2.connect(dsn)
     try:
         with conn, conn.cursor() as cur:  # one transaction: all or nothing
-            cur.execute("UPDATE player_seasons SET season_rank = NULL")
+            if from_season is None:
+                cur.execute("UPDATE player_seasons SET season_rank = NULL")
+            else:
+                player_seasons = [p for p in player_seasons if p["season"] >= season_label(from_season)]
+                cur.execute("UPDATE player_seasons SET season_rank = NULL WHERE season >= %s", (season_label(from_season),))
 
             names = sorted({p["name"] for p in player_seasons})
             player_ids = dict(
@@ -329,6 +435,10 @@ def print_summary(stats: dict, player_seasons: list) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="box score CSV")
+    parser.add_argument("--espn-csv", type=Path, default=DEFAULT_ESPN_CSV,
+                        help="ESPN box scores from espn_fetch.py (skipped if the file doesn't exist)")
+    parser.add_argument("--write-from-season", type=int, default=None,
+                        help="only write these seasons onward (start year, e.g. 2022); earlier ones stay untouched")
     parser.add_argument("--first-season", type=int, default=1983, help="first season start year (1983 = 1983-84)")
     parser.add_argument("--min-games-pct", type=float, default=0.5, help="min share of the season's games played")
     parser.add_argument("--min-mpg", type=float, default=20.0, help="min minutes per game")
@@ -342,6 +452,14 @@ def main() -> None:
     print(f"Reading {args.csv.name} (seasons {season_label(args.first_season)} onward) ...")
     rows, team_games, stats = read_rows(args.csv, args.first_season)
     rows = assign_identities(rows, stats)
+    if args.espn_csv.exists():
+        print(f"Reading {args.espn_csv.name} ...")
+        espn_rows, unmatched = read_espn_rows(args.espn_csv, args.first_season, rows, team_games, stats)
+        rows += espn_rows
+        stats["espn_new_players"] = len(unmatched)
+        if unmatched:
+            print(f"  New players from ESPN (no Kaggle match since {season_label(MATCH_SEASONS_FROM)}):")
+            print("    " + ", ".join(unmatched))
     player_seasons = build_player_seasons(rows, team_games, args.min_games_pct, args.min_mpg)
     stats["qualified_player_seasons"] = len(player_seasons)
     stats["game_logs_to_load"] = sum(len(p["games"]) for p in player_seasons)
@@ -353,7 +471,7 @@ def main() -> None:
     url = args.database_url or os.environ.get("DATABASE_URL")
     if not url:
         sys.exit("DATABASE_URL not set (copy .env.example to .env at the repo root)")
-    load_into_db(psycopg_dsn(url), player_seasons)
+    load_into_db(psycopg_dsn(url), player_seasons, args.write_from_season)
 
 
 if __name__ == "__main__":

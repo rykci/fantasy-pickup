@@ -32,7 +32,7 @@ describe('createGame', () => {
       rosterSize: 5,
       uniquePlayers: true,
       fromSeason: 1983,
-      toSeason: 2022,
+      toSeason: 2025,
       showSeasonTeam: false,
       showGameDate: false,
       showAverages: false,
@@ -104,7 +104,7 @@ describe('createGame', () => {
     });
     await expect(service.createGame('vs_cpu', { fromSeason: 2000, toSeason: 1999 })).rejects.toBeInstanceOf(SettingsError);
     await expect(service.createGame('vs_cpu', { fromSeason: 1982 })).rejects.toBeInstanceOf(SettingsError);
-    await expect(service.createGame('vs_cpu', { toSeason: 2023 })).rejects.toBeInstanceOf(SettingsError);
+    await expect(service.createGame('vs_cpu', { toSeason: 2026 })).rejects.toBeInstanceOf(SettingsError);
   });
 
   it('refuses to start without loaded data', async () => {

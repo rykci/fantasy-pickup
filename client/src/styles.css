@@ -1870,3 +1870,8 @@ td.stat-in {
     font-size: 1em;
   }
 }
+
+/* The rules in a guest's lobby: read left to right like on the home page. */
+.lobby-rules {
+  text-align: left;
+}

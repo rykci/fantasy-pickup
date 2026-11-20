@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 // The rules as five illustrated steps. Open for first-time visitors; collapsed once
 // they've watched a reveal (the results page leaves an fp-reveal-seen-<id> key behind).
+// Shown on the home page, and in the lobby for a friend who joined (they skip the home page).
 
 function hasPlayed(): boolean {
   try {
@@ -116,10 +117,10 @@ const STEPS: { title: string; text: string; Art: () => React.JSX.Element }[] = [
   },
 ];
 
-export default function HowItWorks() {
+export default function HowItWorks({ className = '' }: { className?: string }) {
   const [open, setOpen] = useState(() => !hasPlayed());
   return (
-    <details className="settings-details how-it-works" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+    <details className={`settings-details how-it-works ${className}`} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>
         <span className="setting-label">How it works</span>
         {!open && <span className="setting-hint">Pool, coin flip, snake draft, one secret game each, 9 categories</span>}
