@@ -10,6 +10,8 @@ const settingsFields = {
   poolSize: z.number().int().optional(),
   rosterSize: z.number().int().optional(),
   uniquePlayers: z.boolean().optional(),
+  fromSeason: z.number().int().optional(),
+  toSeason: z.number().int().optional(),
   showSeasonTeam: z.boolean().optional(),
   showGameDate: z.boolean().optional(),
   showAverages: z.boolean().optional(),
@@ -27,6 +29,8 @@ const joinBody = z.object({ code: z.string().trim().min(1).max(10), name: player
 /** Online players prove their seat with the token they got when creating or joining. */
 const PLAYER_TOKEN_HEADER = 'x-player-token';
 const tokenOf = (req: Request) => req.get(PLAYER_TOKEN_HEADER) || undefined;
+const rematchBody = z.object({ accept: z.boolean().default(true) });
+
 const pickBody = z.object({
   playerSeasonId: z.number().int().positive(),
   team: z.enum(['A', 'B']).optional(),
@@ -122,7 +126,8 @@ export function createApp(service: GameService) {
   app.post(
     '/api/games/:id/rematch',
     route(async (req, res) => {
-      res.status(201).json(await service.rematch(parseGameId(req), tokenOf(req)));
+      const { accept } = parseBody(rematchBody, req.body);
+      res.json(await service.rematch(parseGameId(req), tokenOf(req), accept));
     }),
   );
 

@@ -147,6 +147,9 @@ model Game {
   rosterSize    Int         @map("roster_size")
   /// true = at most one season per player in the pool
   uniquePlayers Boolean     @map("unique_players")
+  /// Seasons the pool is drawn from, by starting year (1995 = 1995-96), inclusive
+  fromSeason    Int         @default(1983) @map("from_season")
+  toSeason      Int         @default(2022) @map("to_season")
   /// Coin flip at creation: this team picks first (snake order follows from it)
   firstTeam     TeamSide    @default(A) @map("first_team")
   // What the draft board shows before the reveal. Anything hidden is not sent at all.
@@ -231,6 +234,8 @@ model GameSeat {
   tokenHash  String   @map("token_hash")
   joinedAt   DateTime @default(now()) @map("joined_at")
   lastSeenAt DateTime @default(now()) @map("last_seen_at")
+  /// After a finished game: true = wants a rematch, false = said no (or left), null = hasn't answered.
+  rematch    Boolean?
 
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
 

@@ -49,7 +49,7 @@ Open **http://localhost:5173**.
 
 ```bash
 cd server
-npm test           # 97 unit tests — no database needed
+npm test           # 100 unit tests — no database needed
 npm run test:db    # 14 integration tests against the docker Postgres (needs migrate + ingest)
 ```
 
@@ -66,12 +66,13 @@ npm run test:db    # 14 integration tests against the docker Postgres (needs mig
    | Team size (= rounds) | 5 | 1–13 |
    | Pool size | 15 | 2 × team size – 200 |
    | One season per player | on | off: the pool may hold 1988 Jordan *and* 1996 Jordan |
+   | Seasons | all (1983-84 to 2022-23) | any From/To range, or a preset: All · 80s · 90s · 2000s · 2010s+ |
    | **What you see while drafting** | | anything off is hidden until the reveal |
    | ↳ Season & team | off | off: just the player's name |
    | ↳ Chosen game date & opponent | off | on: a clue such as "Dec 25, 1996 vs BOS" (that game's stats stay secret) |
    | ↳ Season averages | off | on: all 9 categories plus VAL |
 
-   At this moment the server draws the pool at random from the **top 100 player-seasons of every season**
+   At this moment the server draws the pool at random from the **top 100 player-seasons of every season in the range**
    (see [Data](#data)) and locks one random game from that season for each. Locked games are never shown or
    changed until the reveal. It also flips a coin for the first pick.
 2. **Coin flip** — opening the draft plays the flip: a coin with each side's name spins and lands on the winner, who
@@ -129,8 +130,9 @@ The URL tracks the game (`?game=12`), so refreshing mid-draft keeps your place.
    leaves, the game waits for them; with a clock on, their picks keep being made automatically.
 5. **Reveal:** when the last pick is in, both players go to the results and the reveal starts at the same moment
    on both screens (joining late picks up where it is). The headline is from your side: "You win!" or "Sam wins".
-6. **Rematch:** either player can start one: same players and settings, a new pool and a new coin flip. The other
-   player gets a **Join the rematch →** button; the host starts it as usual.
+6. **Rematch:** either player clicks **Rematch**; the other gets a pop-up, "Ricky wants a rematch", with
+   **Accept** or **Decline**. When both say yes, the new game starts right away (same players and settings, a new
+   pool and a new coin flip; no lobby). After a no, asking again shows the pop-up again. Going **Home** counts as no.
 
 How it works:
 - **No accounts.** Creating or joining gives your browser a random seat token (kept per tab and per browser, so
@@ -170,13 +172,13 @@ All JSON. The draft rules are enforced on the server, so the UI cannot bypass th
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 15, "rosterSize"?: 5, "uniquePlayers"?: true, "showSeasonTeam"?: false, "showGameDate"?: false, "showAverages"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
-| `GET` | `/api/games/:id` | — | `serverNow`; for online games `online` (room code, `you`, seats with names and connected flags, pick clock, `flipAt`, `turnStartedAt`, `turnDeadline`, `revealStartedAt`, `rematchGameId`, `expired`). Status, settings, `firstTeam` (the coin-flip winner), current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
+| `POST` | `/api/games` | `{ "mode": "vs_cpu" \| "pass_and_play", "poolSize"?: 15, "rosterSize"?: 5, "uniquePlayers"?: true, "fromSeason"?: 1983, "toSeason"?: 2022, "showSeasonTeam"?: false, "showGameDate"?: false, "showAverages"?: false }` | Draws the pool, locks a random game for each player-season. Returns the game state. |
+| `GET` | `/api/games/:id` | — | `serverNow`; for online games `online` (room code, `you`, seats with names and connected flags, pick clock, `flipAt`, `turnStartedAt`, `turnDeadline`, `revealStartedAt`, `rematch` (each player's answer: `true`/`false`/`null`), `rematchGameId`, `expired`). Status, settings, `firstTeam` (the coin-flip winner), current turn, draft order, rosters, available player-seasons (`season`/`team`, `gameClue`, `averages`/`value` are `null` unless the settings show them; all shown after the reveal), and picks. **Never includes locked games.** |
 | `POST` | `/api/games/:id/picks` | `{ "playerSeasonId": 1234, "team"?: "A" \| "B" }` | Validates the turn, that the player-season is available and in the pool, and that the draft isn't finished. In `vs_cpu`, `team` defaults to `A` and the CPU's picks are returned in `autoPicks`. Online: needs your token, and only works on your turn. |
 | `POST` | `/api/online/games` | `{ "name": "Ricky", "pickSeconds"?: 30 \| 60 \| 90 \| null, …settings }` | Creates an online game in the lobby. Returns `{ gameId, token, team: "A", state }`: keep the token, it's your seat. |
 | `POST` | `/api/online/join` | `{ "code": "KX7P", "name": "Sam" }` | Takes Team B. `404` unknown code, `409` full or already started, `410` expired. Returns `{ gameId, token, team: "B", state }`. |
 | `POST` | `/api/games/:id/start` | — (host's token) | Host only, once Team B has joined. Schedules the coin flip and the first turn. |
-| `POST` | `/api/games/:id/rematch` | — (a player's token) | After an online game: same players and settings, new pool and flip. Idempotent. Returns `{ gameId }`. |
+| `POST` | `/api/games/:id/rematch` | `{ accept? }` (default `true`; a player's token) | After an online game: your answer to "rematch?". Yes after the other's no asks them again. When both said yes, a new game starts at once (same players and settings, new pool and flip). Returns `{ gameId }`: the new game, or `null` until both agree. |
 | `POST` | `/api/games/:id/reveal` | — | `409` until the last pick. Returns locked lines, team totals, category winners, score, winner, `decidedBy`, and `undrafted` (every pool player nobody picked, with their locked game). Idempotent. |
 
 Errors look like `{ "error": { "code": "NOT_YOUR_TURN", "message": "..." } }`.
@@ -205,8 +207,8 @@ players ──< player_seasons ──< game_logs           (one row per complete
 | `players` | `id`, `name` (unique; see identity notes below) |
 | `player_seasons` | `id`, `player_id`, `season` ("1986-87"), `team`, `games_played`, per-game `minutes pts reb ast stl blk fg3m fgm fga ftm fta tov`, `value`, `season_rank` · unique `(player_id, season)` |
 | `game_logs` | `id`, `player_season_id`, `game_id`, `game_date`, `team`, `opponent`, `is_home`, `minutes`, the 11 box-score stats · unique `(player_season_id, game_id)` |
-| `games` | `id`, `mode` (`vs_cpu`, `pass_and_play`, `online`), `status` (`lobby` (online only) → `drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `show_season_team`, `show_game_date`, `show_averages`, `first_team` (coin flip), `winner`, `score_a`, `score_b`, timestamps · online: `room_code` (unique), `pick_seconds`, `started_at`, `turn_started_at`, `reveal_started_at`, `rematch_game_id`, `last_activity_at` |
-| `game_seats` | PK `(game_id, team)`, `name` (1–20 chars), `token_hash` (SHA-256 of the seat token), `joined_at`, `last_seen_at` |
+| `games` | `id`, `mode` (`vs_cpu`, `pass_and_play`, `online`), `status` (`lobby` (online only) → `drafting → draft_complete → revealed`), `pool_size`, `roster_size`, `unique_players`, `from_season`, `to_season` (starting years, 1995 = 1995-96), `show_season_team`, `show_game_date`, `show_averages`, `first_team` (coin flip), `winner`, `score_a`, `score_b`, timestamps · online: `room_code` (unique), `pick_seconds`, `started_at`, `turn_started_at`, `reveal_started_at`, `rematch_game_id`, `last_activity_at` |
+| `game_seats` | PK `(game_id, team)`, `name` (1–20 chars), `token_hash` (SHA-256 of the seat token), `joined_at`, `last_seen_at`, `rematch` (answer after a finished game: `true`/`false`/`NULL`) |
 | `game_players` | PK `(game_id, player_season_id)`, `locked_game_log_id` |
 | `draft_picks` | `id`, `game_id`, `team`, `pick_number`, `player_season_id`, `picked_at` · unique `(game_id, pick_number)` and `(game_id, player_season_id)` |
 
@@ -217,7 +219,7 @@ Integrity is enforced in Postgres as well as in the app (`server/prisma/migratio
 - **Locked games can't change.** A `BEFORE UPDATE` trigger on `game_players` rejects any change to
   `locked_game_log_id`. A second trigger rejects edits to a `game_logs` row once it's locked into any game.
 - **A locked log belongs to its player-season.** Composite FK `(locked_game_log_id, player_season_id) → game_logs(id, player_season_id)`.
-- **Valid settings.** `CHECK`: `roster_size` 1–13, `2 × roster_size ≤ pool_size ≤ 200`.
+- **Valid settings.** `CHECK`: `roster_size` 1–13, `2 × roster_size ≤ pool_size ≤ 200`, `from_season ≤ to_season`.
 - **Snake order lives in the schema.** A trigger checks each pick's `team` against `pick_number` and the game's
   `first_team`, and rejects `pick_number` beyond `2 × roster_size`. Another trigger stops `first_team` changing
   once picks exist.
@@ -309,7 +311,7 @@ longer. Vercel's Hobby plan is for non-commercial use, which suits a demo with f
 
 ---
 
-## Scope (v1.3)
+## Scope (v1.4)
 
 No accounts, matchmaking with strangers, spectators, chat, trades or bench.
 
@@ -318,6 +320,8 @@ The UI calls each player-season's secret game its **chosen game**; the code and 
 **v1.2:** the box-score reveal (pick by pick, stat by stat), sound, and share as image / text.
 **v1.3:** online with a friend (room codes and invite links, pick clock, synced coin flip and reveal, rematch),
 hosted on Vercel + Neon.
+**v1.4:** season range setting, rematch by invitation (accept / decline, starts straight away), illustrated
+"How it works".
 **Before a public launch:** hosting for real load (a WebSocket server or a push service instead of polling, a paid
 database), more players, matchmaking, accounts.
-**Later:** draft signposts / category badges, tiered pool sampling, a "Legends" mode, era filters, UI polish.
+**Later:** draft signposts / category badges, tiered pool sampling, a "Legends" mode, UI polish.

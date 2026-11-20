@@ -1,5 +1,17 @@
 import { type ChangeEvent, useState } from 'react';
-import { DEFAULT_SETTINGS, LIMITS, PICK_CLOCKS, api, savedName, type GameMode, type GameSettings } from '../api';
+import {
+  DEFAULT_SETTINGS,
+  LIMITS,
+  PICK_CLOCKS,
+  SEASONS,
+  api,
+  savedName,
+  seasonLabel,
+  seasonRange,
+  type GameMode,
+  type GameSettings,
+} from '../api';
+import HowItWorks from '../components/HowItWorks';
 
 const MODES: { value: GameMode; title: string; blurb: string }[] = [
   { value: 'vs_cpu', title: 'Solo vs CPU', blurb: 'A coin flip decides who picks first. The CPU drafts the best available player — mostly.' },
@@ -70,6 +82,16 @@ const VISIBILITY: { key: 'showSeasonTeam' | 'showGameDate' | 'showAverages'; lab
   { key: 'showAverages', label: 'Season averages', hint: 'All 9 categories plus VAL, the 9-cat value vs. this pool.' },
 ];
 
+/** Quick picks for the season range. */
+const ERAS: { label: string; from: number; to: number }[] = [
+  { label: 'All', from: SEASONS.first, to: SEASONS.last },
+  { label: '80s', from: SEASONS.first, to: 1989 },
+  { label: '90s', from: 1990, to: 1999 },
+  { label: '2000s', from: 2000, to: 2009 },
+  { label: '2010s+', from: 2010, to: SEASONS.last },
+];
+const YEARS = Array.from({ length: SEASONS.last - SEASONS.first + 1 }, (_, i) => SEASONS.first + i);
+
 /** One line for the collapsed settings, e.g. "Teams of 5 · pool of 15 · you see name, season & team". */
 function settingsSummary(s: GameSettings): string {
   const shown = [
@@ -83,6 +105,7 @@ function settingsSummary(s: GameSettings): string {
   return [
     `Teams of ${size(s.rosterSize)}`,
     `pool of ${size(s.poolSize)}`,
+    seasonRange(s),
     s.uniquePlayers && 'one season per player',
     `you see ${seen}`,
   ]
@@ -231,6 +254,62 @@ export default function Home({ onStart, invite }: { onStart: (gameId: number) =>
           </span>
         </label>
         <fieldset className="setting-group">
+          <legend className="setting-label">Seasons</legend>
+          <span className="setting-hint">
+            Draw the pool from these seasons only. Eras play differently: 80s rosters hit far fewer threes.
+          </span>
+          <div className="segmented" role="radiogroup" aria-label="Era">
+            {ERAS.map((e) => {
+              const on = settings.fromSeason === e.from && settings.toSeason === e.to;
+              return (
+                <button
+                  key={e.label}
+                  role="radio"
+                  aria-checked={on}
+                  className={on ? 'active' : ''}
+                  onClick={() => setSettings((s) => ({ ...s, fromSeason: e.from, toSeason: e.to }))}
+                >
+                  {e.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="season-range">
+            <label>
+              <span className="setting-hint">From</span>
+              <select
+                value={settings.fromSeason}
+                onChange={(e) => {
+                  const from = Number(e.target.value);
+                  setSettings((s) => ({ ...s, fromSeason: from, toSeason: Math.max(from, s.toSeason) }));
+                }}
+              >
+                {YEARS.map((y) => (
+                  <option key={y} value={y}>
+                    {seasonLabel(y)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="setting-hint">To</span>
+              <select
+                value={settings.toSeason}
+                onChange={(e) => {
+                  const to = Number(e.target.value);
+                  setSettings((s) => ({ ...s, toSeason: to, fromSeason: Math.min(to, s.fromSeason) }));
+                }}
+              >
+                {YEARS.map((y) => (
+                  <option key={y} value={y}>
+                    {seasonLabel(y)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </fieldset>
+        <fieldset className="setting-group">
           <legend className="setting-label">What you see while drafting</legend>
           <span className="setting-hint">
             Test your ball knowledge: the less you show, the more it comes down to what you know. Everything is
@@ -260,32 +339,7 @@ export default function Home({ onStart, invite }: { onStart: (gameId: number) =>
 
       <JoinGame onJoined={onStart} />
 
-      <section className="rules">
-        <h2>How it works</h2>
-        <ol>
-          <li>
-            <strong>A random pool.</strong> Drawn from the top 100 player-seasons of every season since 1983-84, ranked
-            by 9-category value.
-          </li>
-          <li>
-            <strong>Coin flip, then a snake draft.</strong> The flip winner picks first: A B · B A · A B · … until both
-            teams are full.
-          </li>
-          <li>
-            <strong>Draft on what you know.</strong> By default you see only each player&apos;s name, and each player
-            appears once. You can show their season and team, the date of their chosen game, or their season averages.
-          </li>
-          <li>
-            <strong>One chosen game decides it.</strong> When the game is created, each player-season gets one random
-            regular-season game from that season, hidden until the draft is over. Variance is the point.
-          </li>
-          <li>
-            <strong>Nine categories:</strong> PTS, REB, AST, STL, BLK, 3PM, FG%, FT% and TO, team totals. FG% and FT%
-            are team makes ÷ attempts; fewer turnovers wins TO. Win the most categories to win. If category wins are
-            level, total PTS breaks the tie; if that's level too, it's a draw.
-          </li>
-        </ol>
-      </section>
+      <HowItWorks />
     </div>
   );
 }

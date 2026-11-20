@@ -422,8 +422,10 @@ function RevealedResults({
   const [, setFlicker] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [muted, setMuted] = useMuted();
+  // Online rematch: both players' answers, kept fresh by polling once the result is in.
+  const [room, setRoom] = useState(online);
   const [rematchId, setRematchId] = useState<number | null>(online?.rematchGameId ?? null);
-  const [rematching, setRematching] = useState(false);
+  const [answering, setAnswering] = useState(false);
   const live = useRef(cursor < tl.end); // false when we open straight onto the result: no sounds
   const rows = useRef(new Map<number, HTMLTableRowElement>());
   const top = useRef<HTMLDivElement>(null);
@@ -472,33 +474,73 @@ function RevealedResults({
     };
   }, [cursor, done, step, waiting, t0, tl]);
 
-  // Online, after the result: watch for a rematch started by the other player.
+  // Online, after the result: watch for the other player's answer and for the rematch starting.
   useEffect(() => {
     if (!online || !done || rematchId !== null) return;
-    const id = window.setInterval(async () => {
+    const poll = async () => {
       try {
         const s = await api.getGame(result.gameId);
-        if (s.online?.rematchGameId) setRematchId(s.online.rematchGameId);
+        if (!s.online) return;
+        setRoom(s.online);
+        if (s.online.rematchGameId) setRematchId(s.online.rematchGameId);
       } catch {
         // Try again next time.
       }
-    }, 2500);
+    };
+    void poll();
+    const id = window.setInterval(poll, 1000);
     return () => window.clearInterval(id);
   }, [online, done, rematchId, result.gameId]);
 
-  async function rematch() {
-    setRematching(true);
+  function goToRematch(id: number) {
+    adoptRematch(result.gameId, id);
+    onRematch(id);
+  }
+
+  // Both said yes: the new game has started, so go straight to its coin flip. (Not when opening
+  // an old result whose rematch already happened: that shows a button instead.)
+  const followRematch = useRef(online?.rematchGameId == null);
+  useEffect(() => {
+    if (rematchId !== null && followRematch.current) {
+      followRematch.current = false;
+      goToRematch(rematchId);
+    }
+  });
+
+  const other: Team | null = you ? (you === 'A' ? 'B' : 'A') : null;
+  const mine = room && you ? room.rematch[you] : null;
+  const theirs = room && other ? room.rematch[other] : null;
+  const theirName = (other && room?.seats[other]?.name) || 'Your friend';
+  const theyLeft = !!other && room?.seats[other]?.connected === false;
+  const asked = done && rematchId === null && mine === null && theirs === true;
+
+  useEffect(() => {
+    if (asked && !muted) sound.yourTurn();
+  }, [asked, muted]);
+
+  async function answer(accept: boolean) {
+    if (!you || !other) return;
+    setAnswering(true);
+    setNote(null);
+    // Show the answer right away; the next poll confirms it.
+    setRoom((r) => r && { ...r, rematch: { ...r.rematch, [you]: accept, ...(accept && theirs === false ? { [other]: null } : {}) } as typeof r.rematch });
     try {
-      if (rematchId !== null) {
-        adoptRematch(result.gameId, rematchId);
-        onRematch(rematchId);
-      } else {
-        onRematch((await api.rematch(result.gameId)).gameId);
+      const { gameId } = await api.rematch(result.gameId, accept);
+      if (gameId !== null) {
+        followRematch.current = false;
+        goToRematch(gameId);
       }
     } catch (e) {
       setNote((e as Error).message);
-      setRematching(false);
+    } finally {
+      setAnswering(false);
     }
+  }
+
+  // Leaving counts as "no", so the other player isn't left waiting.
+  function leave() {
+    if (online && you && rematchId === null) void api.rematch(result.gameId, false).catch(() => {});
+    onPlayAgain();
   }
 
   // The end: show the result at the top, play the result sound once, remember the reveal was watched.
@@ -713,17 +755,50 @@ function RevealedResults({
         </section>
       )}
 
+      {asked && (
+        <div className="coin-overlay" role="alertdialog" aria-modal="true" aria-labelledby="rematch-ask">
+          <div className="coin-card rematch-ask">
+            <p className="coin-kicker">Rematch?</p>
+            <h2 id="rematch-ask">{theirName} wants a rematch</h2>
+            <p className="muted small">Same settings, a new pool and a new coin flip.</p>
+            <div className="rematch-buttons">
+              <button className="btn" onClick={() => answer(false)} disabled={answering}>
+                Decline
+              </button>
+              <button className="btn btn-primary" onClick={() => answer(true)} disabled={answering} autoFocus>
+                Accept
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {done && (
         <div className="center end-actions">
           {online && you ? (
             <>
-              <button className="btn btn-primary btn-lg" onClick={rematch} disabled={rematching}>
-                {rematchId !== null ? `Join the rematch →` : rematching ? 'Setting up…' : 'Rematch'}
-              </button>
-              {rematchId !== null && !rematching && (
-                <p className="muted small">A rematch is ready, same settings and a new coin flip.</p>
+              {rematchId !== null ? (
+                <button className="btn btn-primary btn-lg" onClick={() => goToRematch(rematchId)}>
+                  Join the rematch →
+                </button>
+              ) : mine === true && theirs !== false ? (
+                <>
+                  <button className="btn btn-primary btn-lg" disabled>
+                    Waiting for {theirName}…
+                  </button>
+                  <p className="muted small">
+                    {theyLeft ? `${theirName} seems to have left.` : `${theirName} has been asked for a rematch.`}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-primary btn-lg" onClick={() => answer(true)} disabled={answering}>
+                    {mine === true ? 'Ask again' : 'Rematch'}
+                  </button>
+                  {theirs === false && <p className="muted small">{theirName} said no to a rematch.</p>}
+                </>
               )}
-              <button className="btn" onClick={onPlayAgain}>
+              <button className="btn" onClick={leave}>
                 Home
               </button>
             </>

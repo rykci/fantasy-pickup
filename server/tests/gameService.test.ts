@@ -31,6 +31,8 @@ describe('createGame', () => {
       poolSize: 15,
       rosterSize: 5,
       uniquePlayers: true,
+      fromSeason: 1983,
+      toSeason: 2022,
       showSeasonTeam: false,
       showGameDate: false,
       showAverages: false,
@@ -81,6 +83,28 @@ describe('createGame', () => {
       status: 400,
       code: 'POOL_TOO_LARGE',
     });
+  });
+
+  it('season range: the pool only comes from those seasons', async () => {
+    // The test universe has one player-season per year from 1990-91 (60 players over 30 seasons: 2 a year).
+    const s = await service.createGame('vs_cpu', { fromSeason: 1995, toSeason: 1999, poolSize: 10, rosterSize: 5 });
+    const { players } = makeUniverse(60);
+    const seasonOf = new Map(players.map((p) => [p.id, Number(p.season.slice(0, 4))]));
+    const years = s.available.map((p) => seasonOf.get(p.id)!);
+    expect(years).toHaveLength(10);
+    expect(Math.min(...years)).toBeGreaterThanOrEqual(1995);
+    expect(Math.max(...years)).toBeLessThanOrEqual(1999);
+    expect(s.settings).toMatchObject({ fromSeason: 1995, toSeason: 1999 });
+  });
+
+  it('season range: a clear message when the seasons are too narrow for the pool', async () => {
+    await expect(service.createGame('vs_cpu', { fromSeason: 1995, toSeason: 1995, poolSize: 4, rosterSize: 2 })).rejects.toMatchObject({
+      code: 'POOL_TOO_LARGE',
+      message: 'Only 2 different players in 1995-96. Lower the pool size or widen the seasons.',
+    });
+    await expect(service.createGame('vs_cpu', { fromSeason: 2000, toSeason: 1999 })).rejects.toBeInstanceOf(SettingsError);
+    await expect(service.createGame('vs_cpu', { fromSeason: 1982 })).rejects.toBeInstanceOf(SettingsError);
+    await expect(service.createGame('vs_cpu', { toSeason: 2023 })).rejects.toBeInstanceOf(SettingsError);
   });
 
   it('refuses to start without loaded data', async () => {

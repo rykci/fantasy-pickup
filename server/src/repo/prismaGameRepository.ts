@@ -35,9 +35,10 @@ export class PrismaGameRepository implements GameRepository {
     private readonly root?: PrismaClient,
   ) {}
 
-  async listUniverse(topN: number): Promise<PoolCandidate[]> {
+  async listUniverse(topN: number, seasons: { from: number; to: number }): Promise<PoolCandidate[]> {
     const rows = await this.db.playerSeason.findMany({
-      where: { seasonRank: { lte: topN } },
+      // Seasons are "1995-96" strings, so starting years compare as text: "1995" <= "1995-96" < "1996".
+      where: { seasonRank: { lte: topN }, season: { gte: String(seasons.from), lt: String(seasons.to + 1) } },
       select: { id: true, playerId: true },
       orderBy: { id: 'asc' },
     });
@@ -178,14 +179,25 @@ export class PrismaGameRepository implements GameRepository {
   async listSeats(gameId: number): Promise<SeatRecord[]> {
     return this.db.gameSeat.findMany({
       where: { gameId },
-      select: { team: true, name: true, tokenHash: true, joinedAt: true, lastSeenAt: true },
+      select: { team: true, name: true, tokenHash: true, joinedAt: true, lastSeenAt: true, rematch: true },
       orderBy: { team: 'asc' },
     });
   }
 
   async addSeat(gameId: number, seat: Pick<SeatRecord, 'team' | 'name' | 'tokenHash'>, at: Date): Promise<SeatRecord> {
     const s = await this.db.gameSeat.create({ data: { gameId, ...seat, joinedAt: at, lastSeenAt: at } });
-    return { team: s.team, name: s.name, tokenHash: s.tokenHash, joinedAt: s.joinedAt, lastSeenAt: s.lastSeenAt };
+    return {
+      team: s.team,
+      name: s.name,
+      tokenHash: s.tokenHash,
+      joinedAt: s.joinedAt,
+      lastSeenAt: s.lastSeenAt,
+      rematch: s.rematch,
+    };
+  }
+
+  async setRematch(gameId: number, team: Team, answer: boolean | null): Promise<void> {
+    await this.db.gameSeat.update({ where: { gameId_team: { gameId, team } }, data: { rematch: answer } });
   }
 
   async touchSeat(gameId: number, team: Team, at: Date): Promise<void> {

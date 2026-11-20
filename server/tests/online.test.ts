@@ -192,20 +192,43 @@ describe('rematch and expiry', () => {
     return g;
   }
 
-  it('creates one rematch with the same players and settings; both players get the same one', async () => {
+  it('when both say yes, the rematch starts right away with the same players and settings', async () => {
     const g = await finishedGame();
-    const a = await service.rematch(g.id, g.host);
-    const b = await service.rematch(g.id, g.guest);
-    expect(b.gameId).toBe(a.gameId);
-    const next = await service.getState(a.gameId, g.guest);
-    expect(next.status).toBe('lobby');
-    expect(next.online!.you).toBe('B'); // same token, same seat
-    expect(next.teamLabels).toEqual({ A: 'Ricky', B: 'Sam' });
-    expect(next.settings).toMatchObject({ rosterSize: 2, poolSize: 8 });
-    expect(next.online!.roomCode).not.toBe((await service.getState(g.id)).online!.roomCode);
-    expect((await service.getState(g.id)).online!.rematchGameId).toBe(a.gameId);
-    // The host starts it as usual.
-    expect((await service.startGame(a.gameId, g.host)).status).toBe('drafting');
+    expect(await service.rematch(g.id, g.host)).toEqual({ gameId: null });
+    let s = await service.getState(g.id, g.guest);
+    expect(s.online!.rematch).toEqual({ A: true, B: null }); // Sam sees "Ricky wants a rematch"
+    expect(s.online!.rematchGameId).toBeNull();
+
+    const { gameId } = await service.rematch(g.id, g.guest);
+    expect(gameId).not.toBeNull();
+    expect((await service.getState(g.id)).online!.rematchGameId).toBe(gameId);
+    // Asking again (e.g. a late click) lands in the same game.
+    expect(await service.rematch(g.id, g.host)).toEqual({ gameId });
+
+    s = await service.getState(gameId!, g.guest);
+    expect(s.status).toBe('drafting'); // no lobby: straight to the coin flip
+    expect(s.online!.you).toBe('B'); // same token, same seat
+    expect(s.teamLabels).toEqual({ A: 'Ricky', B: 'Sam' });
+    expect(s.settings).toMatchObject({ rosterSize: 2, poolSize: 8 });
+    expect(s.online!.flipAt).toBe(new Date(clock + ONLINE.FLIP_LEAD_MS).toISOString());
+    expect(s.online!.turnStartedAt).toBe(new Date(clock + ONLINE.FIRST_TURN_LEAD_MS).toISOString());
+    expect(s.online!.rematch).toEqual({ A: null, B: null });
+  });
+
+  it('no means no, until the other player asks again', async () => {
+    const g = await finishedGame();
+    await service.rematch(g.id, g.host);
+    expect(await service.rematch(g.id, g.guest, false)).toEqual({ gameId: null });
+    expect((await service.getState(g.id)).online!.rematch).toEqual({ A: true, B: false });
+
+    // Ricky asks again: Sam's answer is cleared, so Sam is asked again.
+    await service.rematch(g.id, g.host);
+    expect((await service.getState(g.id)).online!.rematch).toEqual({ A: true, B: null });
+
+    // Ricky leaves (counts as no); then Sam asking doesn't start anything.
+    await service.rematch(g.id, g.host, false);
+    expect(await service.rematch(g.id, g.guest)).toEqual({ gameId: null });
+    expect((await service.getState(g.id)).online!.rematchGameId).toBeNull();
   });
 
   it('rematch needs a finished game and a player', async () => {

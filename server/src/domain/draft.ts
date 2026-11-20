@@ -6,12 +6,26 @@ export const DEFAULT_SETTINGS: GameSettings = {
   poolSize: 15,
   rosterSize: 5,
   uniquePlayers: true,
+  fromSeason: 1983,
+  toSeason: 2022,
   showSeasonTeam: false,
   showGameDate: false,
   showAverages: false,
 };
 /** Mirrored by the games_settings_valid CHECK constraint. */
 export const LIMITS = { minRoster: 1, maxRoster: 13, maxPool: 200 } as const;
+/** The seasons in the data, by starting year: 1983-84 to 2022-23. */
+export const SEASONS = { first: 1983, last: 2022 } as const;
+
+/** 1995 → "1995-96". */
+export function seasonLabel(startYear: number): string {
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
+
+/** "1995-96" → 1995. */
+export function seasonStart(season: string): number {
+  return Number(season.slice(0, 4));
+}
 
 export interface DraftSlot {
   pickNumber: number; // 1-based, 1..totalPicks
@@ -35,6 +49,12 @@ export function validateSettings(s: GameSettings): GameSettings {
       `Pool size must be a whole number from ${minPool} (enough to fill both teams of ${s.rosterSize}) to ${maxPool}.`,
     );
   }
+  const { first, last } = SEASONS;
+  const year = (n: number) => Number.isInteger(n) && n >= first && n <= last;
+  if (!year(s.fromSeason) || !year(s.toSeason)) {
+    throw new SettingsError(`Seasons must be from ${seasonLabel(first)} to ${seasonLabel(last)}.`);
+  }
+  if (s.fromSeason > s.toSeason) throw new SettingsError('The first season must not be after the last one.');
   return s;
 }
 

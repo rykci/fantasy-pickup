@@ -47,7 +47,6 @@ export default function App() {
         <button className="brand" onClick={() => go({ name: 'home' })}>
           <span aria-hidden>🏀</span> Fantasy Pickup
         </button>
-        <span className="topbar-sub">1983–2023 one-game draft</span>
       </header>
       <main>
         {screen.name === 'home' && (

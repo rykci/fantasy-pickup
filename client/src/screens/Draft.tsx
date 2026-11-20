@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, localTime, type GameState, type PickView, type PlayerView, type Team } from '../api';
+import { api, localTime, seasonRange, type GameState, type PickView, type PlayerView, type Team } from '../api';
 import CoinFlip from '../components/CoinFlip';
 import DraftOrder from '../components/DraftOrder';
 import PlayerTable from '../components/PlayerTable';
@@ -429,7 +429,7 @@ function Lobby({ state, onStarted, onHome }: { state: GameState; onStarted: (s: 
           </div>
         )}
         <p className="muted small">
-          Teams of {s.rosterSize} · pool of {s.poolSize}
+          Teams of {s.rosterSize} · pool of {s.poolSize} · {seasonRange(s)}
           {s.uniquePlayers ? ' · one season per player' : ''} · pick clock {o.pickSeconds ? `${o.pickSeconds}s` : 'off'}
         </p>
       </section>

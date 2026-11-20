@@ -40,6 +40,8 @@ export interface SeatRecord {
   tokenHash: string;
   joinedAt: Date;
   lastSeenAt: Date;
+  /** After a finished game: wants a rematch (true), said no (false), or hasn't answered (null). */
+  rematch: boolean | null;
 }
 
 export interface OnlineOptions {
@@ -65,7 +67,7 @@ export interface GameResultUpdate {
  */
 export interface GameRepository {
   /** Every draftable player-season: the top `topN` of each NBA season by 9-cat rank. */
-  listUniverse(topN: number): Promise<PoolCandidate[]>;
+  listUniverse(topN: number, seasons: { from: number; to: number }): Promise<PoolCandidate[]>;
   /** The ids of every game log of the given player-seasons. */
   listGameLogIds(playerSeasonIds: number[]): Promise<PlayerSeasonLogIds[]>;
   /** Creates the game and its locked games atomically. */
@@ -81,6 +83,8 @@ export interface GameRepository {
   listSeats(gameId: number): Promise<SeatRecord[]>;
   /** `at` is the join time, also the first "last seen". */
   addSeat(gameId: number, seat: Pick<SeatRecord, 'team' | 'name' | 'tokenHash'>, at: Date): Promise<SeatRecord>;
+  /** Records a player's answer to "rematch?" (null clears it). */
+  setRematch(gameId: number, team: Team, answer: boolean | null): Promise<void>;
   /** Marks a seat's player as seen now (for the "online" dot). */
   touchSeat(gameId: number, team: Team, at: Date): Promise<void>;
   updateGame(gameId: number, update: GameUpdate): Promise<void>;

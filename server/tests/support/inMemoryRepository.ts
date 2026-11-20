@@ -1,5 +1,6 @@
 import type { PlayerSeasonLogIds } from '../../src/domain/lock.js';
 import type { PoolCandidate } from '../../src/domain/pool.js';
+import { seasonStart } from '../../src/domain/draft.js';
 import type {
   GameMode,
   GameClue,
@@ -38,8 +39,10 @@ export class InMemoryGameRepository implements GameRepository {
     public logs: LockedLine[],
   ) {}
 
-  async listUniverse(_topN: number): Promise<PoolCandidate[]> {
-    return this.players.map((p) => ({ playerSeasonId: p.id, playerId: p.playerId }));
+  async listUniverse(_topN: number, seasons: { from: number; to: number }): Promise<PoolCandidate[]> {
+    return this.players
+      .filter((p) => seasonStart(p.season) >= seasons.from && seasonStart(p.season) <= seasons.to)
+      .map((p) => ({ playerSeasonId: p.id, playerId: p.playerId }));
   }
 
   async listGameLogIds(playerSeasonIds: number[]): Promise<PlayerSeasonLogIds[]> {
@@ -111,9 +114,14 @@ export class InMemoryGameRepository implements GameRepository {
   async addSeat(gameId: number, seat: Pick<SeatRecord, 'team' | 'name' | 'tokenHash'>, at: Date): Promise<SeatRecord> {
     const list = this.seats.get(gameId) ?? [];
     if (list.some((s) => s.team === seat.team)) throw Object.assign(new Error('seat taken'), { code: 'P2002' });
-    const s = { ...seat, joinedAt: at, lastSeenAt: at };
+    const s: SeatRecord = { ...seat, joinedAt: at, lastSeenAt: at, rematch: null };
     this.seats.set(gameId, [...list, s]);
     return { ...s };
+  }
+
+  async setRematch(gameId: number, team: Team, answer: boolean | null): Promise<void> {
+    const s = (this.seats.get(gameId) ?? []).find((x) => x.team === team);
+    if (s) s.rematch = answer;
   }
 
   async touchSeat(gameId: number, team: Team, at: Date): Promise<void> {

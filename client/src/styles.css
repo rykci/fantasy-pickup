@@ -87,10 +87,6 @@ main {
   letter-spacing: -0.01em;
   cursor: pointer;
 }
-.topbar-sub {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
 
 /* ------------------------------------------------------------- buttons */
 
@@ -250,26 +246,271 @@ main {
   width: 16px;
   height: 16px;
 }
-.rules {
-  width: 100%;
-  background: var(--panel);
+/* ------------------------------------------------------- season range */
+
+.season-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.season-range label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.season-range select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+}
+.season-range select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.setting-group .segmented {
+  justify-self: start;
+  flex-wrap: wrap;
+}
+
+/* --------------------------------------------------------- how it works */
+
+.hiw-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0 18px 18px;
+  display: grid;
+  /* Three steps on top, two wider ones below. */
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+}
+.hiw-step {
+  grid-column: span 2;
+}
+.hiw-step:nth-child(n + 4) {
+  grid-column: span 3;
+}
+.hiw-step {
+  background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px 22px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-.rules h2 {
-  font-size: 1rem;
-  margin-bottom: 8px;
-}
-.rules ol {
-  margin: 0;
-  padding-left: 20px;
+.hiw-art {
+  height: 96px;
   display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--border);
+}
+.hiw-text {
+  padding: 12px 14px 14px;
+}
+.hiw-text h3 {
+  font-size: 0.95rem;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
   gap: 8px;
+}
+.hiw-text p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.hiw-num {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.75rem;
+  background: var(--accent);
+  color: #111;
+}
+
+/* 1: face-down cards */
+.hiw-fan {
+  position: relative;
+  width: 120px;
+  height: 64px;
+}
+.hiw-mini-card {
+  position: absolute;
+  left: calc(50% - 22px);
+  top: 4px;
+  width: 44px;
+  height: 58px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 8px 6px;
+  transform: translateX(calc((var(--i) - 1.5) * 20px)) rotate(calc((var(--i) - 1.5) * 14deg));
+  transform-origin: 50% 120%;
+}
+.hiw-line {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.hiw-line.short {
+  width: 60%;
+}
+
+/* 2: coin and snake order */
+.hiw-snake {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hiw-coin {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #111;
+  background: radial-gradient(circle at 35% 30%, #ffc27a, var(--team-a));
+  box-shadow: 0 0 0 2px rgba(242, 140, 40, 0.3);
+}
+.hiw-order {
+  display: flex;
+  gap: 3px;
+}
+.hiw-chip {
+  width: 20px;
+  height: 24px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.hiw-chip.team-A {
+  background: var(--team-a-soft);
+  color: var(--team-a);
+}
+.hiw-chip.team-B {
+  background: var(--team-b-soft);
+  color: var(--team-b);
+}
+
+/* 3: name only */
+.hiw-player {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+.hiw-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.hiw-tags {
+  display: flex;
+  gap: 6px;
+}
+.hiw-tag {
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.hiw-tag.blurred {
+  filter: blur(3px);
+}
+
+/* 4: secret game */
+.hiw-secret {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+.hiw-mystery {
+  width: 34px;
+  height: 44px;
+  border-radius: 6px;
+  border: 1px dashed var(--muted);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.1rem;
   color: var(--muted);
 }
-.rules strong {
-  color: var(--text);
+.hiw-arrow {
+  color: var(--muted);
+}
+.hiw-statline {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+.hiw-statline .hot {
+  color: var(--good);
+  font-weight: 700;
+}
+.hiw-statline .cold {
+  color: var(--bad);
+}
+
+/* 5: categories */
+.hiw-score {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+.hiw-result {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+.hiw-cats {
+  display: flex;
+  gap: 4px;
+}
+.hiw-cat {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+.hiw-cat.team-A {
+  background: var(--team-a);
+}
+.hiw-cat.team-B {
+  background: var(--team-b);
+}
+
+@media (max-width: 640px) {
+  /* Phones: one step per row, a shorter picture above the text. */
+  .hiw-steps {
+    grid-template-columns: 1fr;
+    padding: 0 12px 12px;
+    gap: 10px;
+  }
+  .hiw-step,
+  .hiw-step:nth-child(n + 4) {
+    grid-column: auto;
+  }
+  .hiw-art {
+    height: 80px;
+  }
 }
 
 /* --------------------------------------------------------------- draft */
@@ -1145,6 +1386,20 @@ td.stat-in {
   flex-direction: column;
   align-items: center;
   gap: 14px;
+}
+.rematch-ask h2 {
+  margin: 0;
+}
+.rematch-ask .muted {
+  margin: 0;
+}
+.rematch-buttons {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.rematch-buttons .btn {
+  flex: 1;
 }
 .coin-kicker {
   margin: 0;

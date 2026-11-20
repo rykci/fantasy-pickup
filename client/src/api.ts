@@ -10,6 +10,9 @@ export interface GameSettings {
   poolSize: number;
   rosterSize: number;
   uniquePlayers: boolean;
+  /** Seasons the pool is drawn from, by starting year (1995 = 1995-96), inclusive. */
+  fromSeason: number;
+  toSeason: number;
   // What the draft board shows before the reveal.
   showSeasonTeam: boolean;
   /** Date and opponent of each locked game, as a clue. */
@@ -21,6 +24,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   poolSize: 15,
   rosterSize: 5,
   uniquePlayers: true,
+  fromSeason: 1983,
+  toSeason: 2022,
   showSeasonTeam: false,
   showGameDate: false,
   showAverages: false,
@@ -33,6 +38,20 @@ export interface GameClue {
 }
 /** Mirrors server/src/domain/draft.ts LIMITS. */
 export const LIMITS = { minRoster: 1, maxRoster: 13, maxPool: 200 } as const;
+/** Mirrors server/src/domain/draft.ts SEASONS: the data covers 1983-84 to 2022-23. */
+export const SEASONS = { first: 1983, last: 2022 } as const;
+
+/** 1995 → "1995-96". */
+export function seasonLabel(startYear: number): string {
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
+
+/** "1990-91 to 1999-00", "1995-96", or "all seasons". */
+export function seasonRange(s: Pick<GameSettings, 'fromSeason' | 'toSeason'>): string {
+  if (s.fromSeason === SEASONS.first && s.toSeason === SEASONS.last) return 'all seasons';
+  if (s.fromSeason === s.toSeason) return seasonLabel(s.fromSeason);
+  return `${seasonLabel(s.fromSeason)} to ${seasonLabel(s.toSeason)}`;
+}
 
 export interface Averages {
   gamesPlayed: number;
@@ -94,6 +113,9 @@ export interface OnlineView {
   turnStartedAt: string | null;
   turnDeadline: string | null;
   revealStartedAt: string | null;
+  /** Each player's answer to "rematch?": true, false (said no or left), or null (not yet). */
+  rematch: Record<Team, boolean | null>;
+  /** Set once both said yes: the new game, already started. */
   rematchGameId: number | null;
   expired: boolean;
 }
@@ -323,10 +345,13 @@ export const api = {
   pick: (id: number, playerSeasonId: number, team: Team) =>
     request<PickResponse>('POST', `/games/${id}/picks`, { playerSeasonId, team }, tokenFor(id)),
   reveal: (id: number) => request<RevealResult>('POST', `/games/${id}/reveal`),
-  /** Same players, same settings. Your seat token carries over to the new game. */
-  rematch: async (id: number) => {
-    const r = await request<{ gameId: number }>('POST', `/games/${id}/rematch`, undefined, tokenFor(id));
-    adoptRematch(id, r.gameId);
+  /**
+   * Your answer to "rematch?". Returns the new game's id once both said yes (your seat token
+   * carries over to it), otherwise null.
+   */
+  rematch: async (id: number, accept = true) => {
+    const r = await request<{ gameId: number | null }>('POST', `/games/${id}/rematch`, { accept }, tokenFor(id));
+    if (r.gameId !== null) adoptRematch(id, r.gameId);
     return r;
   },
 };

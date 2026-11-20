@@ -9,6 +9,8 @@ import {
   totalPicks,
   validatePick,
   validateSettings,
+  SEASONS,
+  seasonLabel,
 } from '../domain/draft.js';
 import { cpuChoosePlayer, poolValues, round1 } from '../domain/fantasy.js';
 import { lockRandomGames } from '../domain/lock.js';
@@ -130,6 +132,9 @@ export interface OnlineView {
   turnDeadline: string | null;
   /** When the reveal starts on both screens. */
   revealStartedAt: string | null;
+  /** Each player's answer to "rematch?": true, false (said no or left), or null (not yet). */
+  rematch: Record<Team, boolean | null>;
+  /** Set once both players said yes: the new game to move to. */
   rematchGameId: number | null;
   expired: boolean;
 }
@@ -230,7 +235,7 @@ export class GameService {
   ): Promise<GameRecord> {
     const given = Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== undefined));
     const s = validateSettings({ ...DEFAULT_SETTINGS, ...given });
-    const universe = await this.repo.listUniverse(UNIVERSE_TOP_N_PER_SEASON);
+    const universe = await this.repo.listUniverse(UNIVERSE_TOP_N_PER_SEASON, { from: s.fromSeason, to: s.toSeason });
     if (universe.length === 0) {
       throw new HttpError(503, 'POOL_NOT_SEEDED', 'No player-seasons loaded. Run the ingestion script.');
     }
@@ -238,7 +243,16 @@ export class GameService {
     try {
       poolIds = samplePool(universe, s.poolSize, s.uniquePlayers, this.rng);
     } catch (e) {
-      if (e instanceof PoolUnavailableError) throw new HttpError(400, 'POOL_TOO_LARGE', e.message);
+      if (e instanceof PoolUnavailableError) {
+        // e.g. "Only 100 different players in 1995-96. Lower the pool size or widen the seasons."
+        const full = s.fromSeason === SEASONS.first && s.toSeason === SEASONS.last;
+        const years =
+          s.fromSeason === s.toSeason
+            ? ` in ${seasonLabel(s.fromSeason)}`
+            : ` from ${seasonLabel(s.fromSeason)} to ${seasonLabel(s.toSeason)}`;
+        const what = `Only ${e.available} ${s.uniquePlayers ? 'different players' : 'player-seasons'}${full ? '' : years}`;
+        throw new HttpError(400, 'POOL_TOO_LARGE', `${what}. Lower the pool size${full ? '' : ' or widen the seasons'}.`);
+      }
       throw e;
     }
     const locks = lockRandomGames(await this.repo.listGameLogIds(poolIds), this.rng);
@@ -327,24 +341,41 @@ export class GameService {
   }
 
   /**
-   * After a finished online game: a new game with the same settings and the same two players
-   * (a fresh pool and coin flip). Idempotent: both players asking get the same rematch.
+   * After a finished online game, each player answers "rematch?". When both say yes, a new game
+   * starts right away: same players and settings, a fresh pool and coin flip, no lobby.
+   * Saying yes after the other player said no asks them again. Leaving counts as no.
+   * Returns the new game's id once both agreed, otherwise null.
    */
-  async rematch(gameId: number, token: string | undefined): Promise<{ gameId: number }> {
+  async rematch(gameId: number, token: string | undefined, accept = true): Promise<{ gameId: number | null }> {
     const newId = await this.repo.withGameLock(gameId, async (repo) => {
       const game = await repo.findGame(gameId);
       if (!game || game.mode !== 'online') throw notFound(`Online game ${gameId}`);
       const seats = await repo.listSeats(gameId);
-      if (!seatFor(seats, token)) throw new HttpError(403, 'NOT_A_PLAYER', 'Only the two players can ask for a rematch.');
+      const me = seatFor(seats, token);
+      if (!me) throw new HttpError(403, 'NOT_A_PLAYER', 'Only the two players can ask for a rematch.');
       if (game.status !== 'draft_complete' && game.status !== 'revealed') {
         throw new HttpError(409, 'NOT_FINISHED', 'Finish this game first.');
       }
-      if (game.rematchGameId !== null) return game.rematchGameId;
-      const next = await this.newGame('online', settingsOf(game), { pickSeconds: game.pickSeconds });
-      // Same seats and tokens: both players are already signed in to the rematch.
-      for (const s of seats) {
-        await this.repo.addSeat(next.id, { team: s.team, name: s.name, tokenHash: s.tokenHash }, this.now());
+      if (game.rematchGameId !== null) return accept ? game.rematchGameId : null;
+      await repo.setRematch(gameId, me.team, accept);
+      const other = seats.find((s) => s.team !== me.team);
+      if (!accept || !other) return null;
+      if (other.rematch !== true) {
+        if (other.rematch === false) await repo.setRematch(gameId, other.team, null); // ask them again
+        return null;
       }
+      // Both said yes: start the new game now, so both screens go straight to the coin flip.
+      const next = await this.newGame('online', settingsOf(game), { pickSeconds: game.pickSeconds });
+      const now = this.now();
+      for (const s of seats) {
+        await this.repo.addSeat(next.id, { team: s.team, name: s.name, tokenHash: s.tokenHash }, now);
+      }
+      await this.repo.updateGame(next.id, {
+        status: 'drafting',
+        startedAt: now,
+        turnStartedAt: new Date(now.getTime() + ONLINE.FIRST_TURN_LEAD_MS),
+        lastActivityAt: now,
+      });
       await repo.updateGame(gameId, { rematchGameId: next.id });
       return next.id;
     });
@@ -669,6 +700,8 @@ function settingsOf(g: GameRecord): GameSettings {
     poolSize: g.poolSize,
     rosterSize: g.rosterSize,
     uniquePlayers: g.uniquePlayers,
+    fromSeason: g.fromSeason,
+    toSeason: g.toSeason,
     showSeasonTeam: g.showSeasonTeam,
     showGameDate: g.showGameDate,
     showAverages: g.showAverages,
@@ -690,6 +723,10 @@ function onlineView(game: GameRecord, seats: SeatRecord[], you: Team | null, now
     turnStartedAt: iso(game.turnStartedAt),
     turnDeadline: iso(turnDeadline(game)),
     revealStartedAt: iso(game.revealStartedAt),
+    rematch: {
+      A: seats.find((x) => x.team === 'A')?.rematch ?? null,
+      B: seats.find((x) => x.team === 'B')?.rematch ?? null,
+    },
     rematchGameId: game.rematchGameId,
     expired: isExpired(game, now),
   };
@@ -791,6 +828,8 @@ function buildState(
       poolSize: game.poolSize,
       rosterSize: game.rosterSize,
       uniquePlayers: game.uniquePlayers,
+      fromSeason: game.fromSeason,
+      toSeason: game.toSeason,
       showSeasonTeam: game.showSeasonTeam,
       showGameDate: game.showGameDate,
       showAverages: game.showAverages,

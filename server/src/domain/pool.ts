@@ -9,7 +9,11 @@ export interface PoolCandidate {
 }
 
 export class PoolUnavailableError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** How many could be drawn. */
+    readonly available: number,
+  ) {
     super(message);
     this.name = 'PoolUnavailableError';
   }
@@ -43,6 +47,7 @@ export function samplePool(
   if (chosen.length < size) {
     throw new PoolUnavailableError(
       `Only ${chosen.length} ${uniquePlayers ? 'different players' : 'player-seasons'} are available; asked for ${size}.`,
+      chosen.length,
     );
   }
   return chosen;

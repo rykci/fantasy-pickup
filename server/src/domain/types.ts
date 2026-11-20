@@ -24,6 +24,9 @@ export interface GameSettings {
   rosterSize: number;
   /** true = at most one season per player in the pool. */
   uniquePlayers: boolean;
+  /** Seasons the pool is drawn from, by starting year: 1995 = 1995-96. Inclusive. */
+  fromSeason: number;
+  toSeason: number;
   // What the draft board shows before the reveal (anything hidden isn't sent at all).
   /** Season and team of each player-season. */
   showSeasonTeam: boolean;
